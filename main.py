@@ -1,6 +1,6 @@
 import os
 import json
-from train import train_with_config
+from train_vae import train_with_config
 from utils import plot_loss_curves
 
 def run_experiments():
