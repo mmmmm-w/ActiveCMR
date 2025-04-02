@@ -1,12 +1,99 @@
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import torch.nn.functional as F
 import json
 import os
 import glob
+
+import torch
+import torch.nn.functional as F
+import numpy as np
+
+import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy.ndimage import map_coordinates
+
+def extract_slice_and_meta(volume, center, normal, slice_shape=(128, 128), pixel_spacing=1.0, to_degrees=True):
+    """
+    Extracts a 2D slice from a 3D segmentation label map along a plane defined by
+    a center (x, y, z) and a normal vector.
+    
+    Parameters:
+      volume (np.ndarray): 3D segmentation label map with shape (D, H, W).
+      center (array-like): Center of the slicing plane in (x, y, z) coordinates.
+      normal (array-like): Normal vector of the slicing plane (defines orientation).
+      slice_shape (tuple): Desired shape (height, width) of the 2D slice.
+      pixel_spacing (float): Spacing between pixels in the extracted slice.
+      to_degrees (bool): If True, returns theta and phi in degrees.
+      
+    Returns:
+      slice_2d (np.ndarray): The 2D segmentation slice.
+      meta (dict): Metadata containing:
+                    - 'center': The center coordinate as [x, y, z].
+                    - 'theta': Azimuth angle of the normal (from x-axis in the x-y plane).
+                    - 'phi': Angle from the z-axis.
+                    
+    Note:
+      - The volume is assumed to use the (z, y, x) order. The provided center is in (x, y, z) coordinates.
+      - Nearest neighbor interpolation is used (order=0) since the volume contains label data.
+    """
+    # Ensure inputs are numpy arrays and normalize the normal vector
+    center = np.array(center, dtype=np.float32)
+    normal = np.array(normal, dtype=np.float32)
+    normal /= np.linalg.norm(normal)
+    
+    # Compute orientation angles from the normal vector:
+    # theta: angle in the x-y plane from the x-axis, phi: angle from the z-axis.
+    theta = np.arctan2(normal[1], normal[0])
+    phi = np.arccos(normal[2])
+    if to_degrees:
+        theta = np.degrees(theta)
+        phi = np.degrees(phi)
+    
+    # Compute two orthonormal vectors (v1, v2) that span the plane.
+    # This ensures v1 and v2 are perpendicular to the normal.
+    if abs(normal[0]) > abs(normal[1]):
+        v1 = np.array([-normal[2], 0, normal[0]])
+    else:
+        v1 = np.array([0, normal[2], -normal[1]])
+    v1 = v1 / np.linalg.norm(v1)
+    v2 = np.cross(normal, v1)
+    
+    # Create a grid in the plane.
+    h, w = slice_shape
+    # Create grid coordinates (centered at 0,0) scaled by pixel_spacing.
+    grid_y = (np.arange(h) - h / 2) * pixel_spacing
+    grid_x = (np.arange(w) - w / 2) * pixel_spacing
+    grid_x, grid_y = np.meshgrid(grid_x, grid_y)
+    
+    # For each grid point, compute its corresponding 3D coordinate:
+    # coord = center + (grid_x * v1) + (grid_y * v2)
+    grid_points = center.reshape((1, 3)) + \
+                  grid_x.flatten().reshape(-1, 1) * v1.reshape((1, 3)) + \
+                  grid_y.flatten().reshape(-1, 1) * v2.reshape((1, 3))
+    
+    # Convert coordinates from (x, y, z) to volume indexing order (z, y, x)
+    coords_volume = np.zeros_like(grid_points)
+    coords_volume[:, 0] = grid_points[:, 2]  # z
+    coords_volume[:, 1] = grid_points[:, 1]  # y
+    coords_volume[:, 2] = grid_points[:, 0]  # x
+    
+    # Use map_coordinates for nearest-neighbor interpolation.
+    # Note: The coordinates array must be given as a list for each dimension.
+    slice_flat = map_coordinates(
+        volume, 
+        [coords_volume[:, 0], coords_volume[:, 1], coords_volume[:, 2]],
+        order=0,
+        mode='nearest'
+    )
+    slice_2d = slice_flat.reshape(slice_shape)
+    
+    # Package meta data
+    meta = {
+        'center': center.tolist(),
+        'theta': theta,
+        'phi': phi,
+    }
+    
+    return slice_2d, meta
 
 def plot_loss_curves(history_file, save_dir=None):
     """
@@ -346,6 +433,44 @@ def show_interactive_comparison(checkpoint_dir, host='0.0.0.0', port=8050):
     fig = create_interactive_comparison(checkpoint_dir)
     fig.show(host=host, port=port)
 
+def test_extract_slice():
+    # Create a simple test volume with a recognizable pattern
+    volume = np.zeros((64, 64, 64), dtype=np.int32)
+    # Add a diagonal plane of 1s
+    for i in range(64):
+        volume[i, i, :] = 1
+    
+    # Test case 1: Extract axial slice (normal = [0, 0, 1])
+    center = [32, 32, 32]  # Center of the volume
+    normal = [0, 0, 1]     # Axial view
+    slice_2d, meta = extract_slice_and_meta(
+        volume, 
+        center=center, 
+        normal=normal, 
+        slice_shape=(32, 32),
+        pixel_spacing=1.0
+    )
+    
+    # Verify metadata
+    assert meta['center'] == center, "Center point mismatch"
+    assert meta['phi'] == 0, "Phi angle should be 0 for axial view"
+    assert slice_2d.shape == (32, 32), "Incorrect slice shape"
+    
+    # Test case 2: Extract sagittal slice (normal = [1, 0, 0])
+    normal = [1, 0, 0]     # Sagittal view
+    slice_2d, meta = extract_slice_and_meta(
+        volume, 
+        center=center, 
+        normal=normal,
+        slice_shape=(32, 32),
+        pixel_spacing=1.0
+    )
+    
+    assert meta['phi'] == 90, "Phi angle should be 90 for sagittal view"
+    assert slice_2d.shape == (32, 32), "Incorrect slice shape"
+    
+    print("✅ extract_slice_and_meta tests passed.")
+
 if __name__ == "__main__":
     print("=== Testing label2onehot / onehot2label ===")
     test_onehot_roundtrip()
@@ -355,3 +480,6 @@ if __name__ == "__main__":
 
     print("\n=== Testing slice visualization ===")
     test_visualization()
+
+    print("\n=== Testing slice extraction ===")
+    test_extract_slice()
