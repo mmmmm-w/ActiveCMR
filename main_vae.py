@@ -9,15 +9,15 @@ def run_experiments():
         'root_dir': "Dataset",
         'batch_size': 16,
         'learning_rate': 0.0001,
-        'epochs': 150,
+        'epochs': 200,
         'validation_interval': 10,
         'depth': 64,
         'checkpoint_dir': "checkpoints"
     }
     
     # Hyperparameters to test
-    z_dims = [8, 16, 32, 64, 128]
-    betas = [0, 0.1, 0.01, 0.001]
+    z_dims = [64]  #[8, 16, 32, 64, 128]
+    betas = [0.001]  #[0, 0.1, 0.01, 0.001]
     
     # Results storage
     results = []

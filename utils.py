@@ -70,17 +70,11 @@ def extract_slice_and_meta(volume, center, normal, slice_shape=(128, 128), pixel
                   grid_x.flatten().reshape(-1, 1) * v1.reshape((1, 3)) + \
                   grid_y.flatten().reshape(-1, 1) * v2.reshape((1, 3))
     
-    # Convert coordinates from (x, y, z) to volume indexing order (z, y, x)
-    coords_volume = np.zeros_like(grid_points)
-    coords_volume[:, 0] = grid_points[:, 2]  # z
-    coords_volume[:, 1] = grid_points[:, 1]  # y
-    coords_volume[:, 2] = grid_points[:, 0]  # x
-    
     # Use map_coordinates for nearest-neighbor interpolation.
     # Note: The coordinates array must be given as a list for each dimension.
     slice_flat = map_coordinates(
         volume, 
-        [coords_volume[:, 0], coords_volume[:, 1], coords_volume[:, 2]],
+        [grid_points[:, 0], grid_points[:, 1], grid_points[:, 2]],
         order=0,
         mode='nearest'
     )
@@ -221,6 +215,57 @@ def show_label_map_slices_XYZ(volume, axis='axial', num_slices=20, cmap='gray'):
         plt.title(f"{title} {indices[i]}")
         plt.axis('off')
     plt.tight_layout()
+    plt.show()
+
+def visualize_3d_volume_plotly(volume, threshold=0.5):
+    # Create coordinates for each point
+    x, y, z = np.where(volume > threshold)
+    
+    # Create 3D scatter plot
+    fig = go.Figure(data=[go.Scatter3d(
+        x=x, y=y, z=z,
+        mode='markers',
+        marker=dict(
+            size=2,
+            color=volume[x, y, z],  # color by intensity
+            colorscale='Viridis',
+            opacity=0.8
+        )
+    )])
+    
+    fig.update_layout(
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z'
+        ),
+        width=800,
+        height=800,
+        title='3D Volume Visualization'
+    )
+    
+    fig.show()
+
+# Method 2: Using Matplotlib (Multiple isosurfaces)
+def visualize_3d_volume_matplotlib(volume, threshold=0.5):
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Create coordinates for each point
+    x, y, z = np.where(volume > threshold)
+    
+    # Plot 3D scatter
+    scatter = ax.scatter(x, y, z, 
+                        c=volume[x, y, z],
+                        cmap='viridis',
+                        alpha=0.1,
+                        marker='.')
+    
+    plt.colorbar(scatter)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    plt.title('3D Volume Visualization')
     plt.show()
 
 def center_crop(volume, crop_size=(128, 128, 64)):
