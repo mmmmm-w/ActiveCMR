@@ -1,0 +1,225 @@
+import os
+import json
+import torch
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import DataLoader, random_split
+from pathlib import Path
+from tqdm import tqdm
+
+from dataset import CardiacSliceDataset
+from model import GenVAE3D_conditional
+from utils import plot_loss_curves
+
+def vae_loss(recon_logits, target, mu, logvar, beta=0.001):
+    """
+    Args:
+        recon_logits: [B, 4, D, H, W]
+        target: class indices [B, D, H, W]
+    """
+    recon_loss = F.cross_entropy(recon_logits, target, reduction='mean')
+    kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / target.shape[0]
+    return recon_loss + beta * kl, recon_loss, kl
+
+def train(model, train_loader, val_loader, optimizer, device, beta=1.0, epochs=200, 
+         validation_interval=10, checkpoint_dir="./", z_dim=64):
+    model.train()
+    best_val_loss = float('inf')
+    
+    # Initialize loss history
+    history = {
+        'train_loss': [],
+        'train_recon': [],
+        'train_kl': [],
+        'val_loss': [],
+        'val_recon': [],
+        'val_kl': [],
+        'epochs': [],
+        'config': {
+            'z_dim': z_dim,
+            'beta': beta,
+            'learning_rate': optimizer.param_groups[0]['lr']
+        }
+    }
+    
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+        recon_loss_total = 0.0
+        kl_loss_total = 0.0
+        total_samples = 0
+
+        for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}"):
+            volume = batch['volume'].to(device)
+            slices = batch['slices'].to(device)  # [B, num_slices, C, H, W]
+            meta = batch['meta'].to(device)      # [B, num_slices, 5]s
+            
+            optimizer.zero_grad()
+            recon, mu, logvar = model(volume, slices, meta)
+            target = torch.argmax(volume, dim=1)  # [B, D, H, W]
+            loss, recon_loss, kl_loss = vae_loss(recon, target, mu, logvar, beta)
+            
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item() * slices.size(0)
+            recon_loss_total += recon_loss.item() * slices.size(0)
+            kl_loss_total += kl_loss.item() * slices.size(0)
+            total_samples += slices.size(0)
+
+        avg_loss = epoch_loss / total_samples
+        avg_recon = recon_loss_total / total_samples
+        avg_kl = kl_loss_total / total_samples
+        
+        # Record training losses
+        history['train_loss'].append(avg_loss)
+        history['train_recon'].append(avg_recon)
+        history['train_kl'].append(avg_kl)
+        history['epochs'].append(epoch + 1)
+        
+        print(f"[Epoch {epoch+1}] Avg Loss: {avg_loss:.4f} | Avg Recon: {avg_recon:.4f} | Avg KL: {avg_kl:.4f}")
+        
+        # Validation step
+        if (epoch + 1) % validation_interval == 0:
+            model.eval()
+            val_loss = 0.0
+            val_recon_loss = 0.0
+            val_kl_loss = 0.0
+            total_val_samples = 0
+
+            with torch.no_grad():
+                for batch in tqdm(val_loader, desc="Validation"):
+                    volume = batch['volume'].to(device)
+                    slices = batch['slices'].to(device)
+                    meta = batch['meta'].to(device)
+                    
+                    B, N, C, H, W = slices.shape
+                    
+                    recon, mu, logvar = model(volume, slices, meta)
+                    target = torch.argmax(volume, dim=1)  # [B, D, H, W]
+                    loss, recon_loss, kl_loss = vae_loss(recon, target, mu, logvar, beta)
+
+                    val_loss += loss.item() * slices.size(0)
+                    val_recon_loss += recon_loss.item() * slices.size(0)
+                    val_kl_loss += kl_loss.item() * slices.size(0)
+                    total_val_samples += slices.size(0)
+
+            avg_val_loss = val_loss / total_val_samples
+            avg_val_recon = val_recon_loss / total_val_samples
+            avg_val_kl = val_kl_loss / total_val_samples
+            
+            # Record validation losses
+            history['val_loss'].append(avg_val_loss)
+            history['val_recon'].append(avg_val_recon)
+            history['val_kl'].append(avg_val_kl)
+            
+            print(f"[Epoch {epoch+1}] Val Loss: {avg_val_loss:.4f} | Val Recon: {avg_val_recon:.4f} | Val KL: {avg_val_kl:.4f}")
+
+            # Save the best model
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                torch.save(model.state_dict(), f"{checkpoint_dir}/best_cvae_z{z_dim}_beta{beta}.pth")
+                print(f"Best model saved with validation loss: {best_val_loss:.4f}")
+
+    # Save final model and loss history
+    torch.save(model.state_dict(), f"{checkpoint_dir}/cvae_z{z_dim}_beta{beta}.pth")
+    with open(f"{checkpoint_dir}/loss_history_z{z_dim}_beta{beta}.json", 'w') as f:
+        json.dump(history, f)
+    
+    return history
+
+def train_with_config(config):
+    """Train the model with given configuration."""
+    # Extract config
+    root_dir = config['root_dir']
+    batch_size = config['batch_size']
+    beta = config['beta']
+    learning_rate = config['learning_rate']
+    epochs = config['epochs']
+    validation_interval = config['validation_interval']
+    z_dim = config['z_dim']
+    checkpoint_dir = config['checkpoint_dir']
+    
+    # Setup device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Training on {device} with config: z_dim={z_dim}, beta={beta}")
+    
+    # Create checkpoint directory
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    # Dataset & DataLoader
+    print("Loading dataset...")
+    dataset = CardiacSliceDataset(
+        root_dir=root_dir,
+        state="HR_ED",
+        volume_size=(64, 128, 128),
+        num_slices=8,
+        direction="axial"
+    )
+    
+    train_size = int(0.8 * len(dataset))
+    val_size = int(0.1 * len(dataset))
+    test_size = len(dataset) - train_size - val_size
+    train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
+
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=batch_size, 
+        shuffle=True, 
+        num_workers=16, 
+        drop_last=True
+    )
+    
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=batch_size, 
+        shuffle=False, 
+        num_workers=16, 
+        drop_last=False
+    )
+    
+    test_loader = DataLoader(
+        test_dataset, 
+        batch_size=batch_size, 
+        shuffle=False, 
+        num_workers=16, 
+        drop_last=False
+    )
+
+    print(f"Train size: {train_size}, Validation size: {val_size}, Test size: {test_size}")
+    
+    # Create model
+    model = GenVAE3D_conditional(
+        img_size=128,
+        z_dim=z_dim,
+        cond_emb_dim=128,
+        n_heads=4
+    ).to(device)
+    
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    
+    # Train
+    history = train(
+        model, train_loader, val_loader, optimizer, device,
+        beta=beta, epochs=epochs, validation_interval=validation_interval,
+        checkpoint_dir=checkpoint_dir, z_dim=z_dim
+    )
+    
+    return history
+
+if __name__ == "__main__":
+    # Default config
+    config = {
+        'root_dir': "Dataset",
+        'batch_size': 16,
+        'beta': 0.001,
+        'learning_rate': 0.0001,
+        'epochs': 150,
+        'validation_interval': 10,
+        'z_dim': 64,
+        'checkpoint_dir': "checkpoints/cvae"
+    }
+    
+    history = train_with_config(config)
+    plot_loss_curves(
+        os.path.join(config['checkpoint_dir'], f"loss_history_z{config['z_dim']}_beta{config['beta']}.json"),
+        save_dir=config['checkpoint_dir']
+    ) 

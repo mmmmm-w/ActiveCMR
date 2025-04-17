@@ -120,7 +120,7 @@ def train(model, train_loader, val_loader, optimizer, device, beta=1.0, epochs=5
     print(f"Training complete. Final model and loss history saved to {checkpoint_dir}/")
     return history
 
-def test(model, test_loader, device, beta, z_dim=64, depth=64):
+def test(model, test_loader, device, beta):
     model.eval()
     test_loss = 0.0
     test_recon_loss = 0.0
@@ -197,7 +197,7 @@ def train_with_config(config):
     # Load the best model for testing
     model.load_state_dict(torch.load(f"{checkpoint_dir}/best_z{z_dim}_d{depth}_beta{beta}.pth"))
     print("Testing the best model on the test dataset...")
-    test_loss, test_recon, test_kl = test(model, test_loader, device, beta, z_dim=z_dim, depth=depth)
+    test_loss, test_recon, test_kl = test(model, test_loader, device, beta)
     
     return history, test_loss, test_recon, test_kl
 

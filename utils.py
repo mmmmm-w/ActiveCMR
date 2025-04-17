@@ -268,6 +268,106 @@ def visualize_3d_volume_matplotlib(volume, threshold=0.5):
     plt.title('3D Volume Visualization')
     plt.show()
 
+def get_label_center(volume):
+    """
+    Calculate the center of mass of the labeled regions in a 3D volume,
+    excluding the background (label 0).
+    
+    Args:
+        volume (np.ndarray or torch.Tensor): 3D volume with shape [X, Y, Z]
+                                            containing label values {0,1,2,4}
+    
+    Returns:
+        np.ndarray: Center coordinates [x, y, z] of the labeled regions
+    """
+    # Convert to numpy if tensor
+    if isinstance(volume, torch.Tensor):
+        volume = volume.numpy()
+    
+    # Create binary mask of all non-zero labels
+    mask = volume > 0
+    
+    # Get coordinates of labeled voxels
+    coords = np.array(np.where(mask)).T  # shape: [N, 3]
+    
+    if len(coords) == 0:
+        raise ValueError("No labeled regions found in volume")
+    
+    # Calculate center of mass
+    center = coords.mean(axis=0)
+    
+    return center
+
+def crop_around_center(volume, crop_size=(128, 128, 64), center=None, pad_value=0):
+    """
+    Crop a 3D volume around a specified center point (or label center if not specified).
+    
+    Args:
+        volume (np.ndarray or torch.Tensor): shape [X, Y, Z]
+        crop_size (tuple): Desired output size (crop_X, crop_Y, crop_Z)
+        center (array-like, optional): Center point [x, y, z] for cropping.
+                                     If None, uses label center.
+        pad_value (int): Value to use for padding if crop extends beyond volume
+    
+    Returns:
+        Cropped volume of shape [crop_X, crop_Y, crop_Z]
+    """
+    # Convert to numpy if tensor
+    is_tensor = isinstance(volume, torch.Tensor)
+    if is_tensor:
+        volume = volume.numpy()
+    
+    # Get center if not provided
+    if center is None:
+        center = get_label_center(volume)
+    center = np.array(center, dtype=np.int32)
+    
+    # Calculate crop boundaries
+    crop_x, crop_y, crop_z = crop_size
+    start_x = center[0] - crop_x // 2
+    start_y = center[1] - crop_y // 2
+    start_z = center[2] - crop_z // 2
+    
+    end_x = start_x + crop_x
+    end_y = start_y + crop_y
+    end_z = start_z + crop_z
+    
+    # Get volume dimensions
+    vol_x, vol_y, vol_z = volume.shape
+    
+    # Initialize output array with pad_value
+    cropped = np.full(crop_size, pad_value, dtype=volume.dtype)
+    
+    # Calculate valid crop regions for both source and target
+    src_start_x = max(0, start_x)
+    src_start_y = max(0, start_y)
+    src_start_z = max(0, start_z)
+    
+    src_end_x = min(vol_x, end_x)
+    src_end_y = min(vol_y, end_y)
+    src_end_z = min(vol_z, end_z)
+    
+    dst_start_x = max(0, -start_x)
+    dst_start_y = max(0, -start_y)
+    dst_start_z = max(0, -start_z)
+    
+    dst_end_x = crop_x - max(0, end_x - vol_x)
+    dst_end_y = crop_y - max(0, end_y - vol_y)
+    dst_end_z = crop_z - max(0, end_z - vol_z)
+    
+    # Copy valid region
+    cropped[dst_start_x:dst_end_x,
+            dst_start_y:dst_end_y,
+            dst_start_z:dst_end_z] = volume[src_start_x:src_end_x,
+                                          src_start_y:src_end_y,
+                                          src_start_z:src_end_z]
+    
+    # Convert back to tensor if input was tensor
+    if is_tensor:
+        cropped = torch.from_numpy(cropped)
+    
+    return cropped
+
 def center_crop(volume, crop_size=(128, 128, 64)):
     """
     Center crop a 3D volume (shape: [X, Y, Z]) to the given size.
@@ -515,6 +615,7 @@ def test_extract_slice():
     assert slice_2d.shape == (32, 32), "Incorrect slice shape"
     
     print("✅ extract_slice_and_meta tests passed.")
+
 
 if __name__ == "__main__":
     print("=== Testing label2onehot / onehot2label ===")
