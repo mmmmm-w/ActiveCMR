@@ -11,6 +11,40 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import map_coordinates
 
+def calculate_dice(ground_truth, generated):
+    """
+    Calculate Dice coefficient for each anatomical structure (LV, MYO, RV)
+    
+    Args:
+        ground_truth: [4, D, H, W] tensor/array (background, LV, MYO, RV)
+        generated: [4, D, H, W] tensor/array (background, LV, MYO, RV)
+    Returns:
+        dict: Dice scores for each structure and average
+    """
+    # Convert to numpy if tensors
+    if torch.is_tensor(ground_truth):
+        ground_truth = ground_truth.cpu().numpy()
+    if torch.is_tensor(generated):
+        generated = generated.cpu().numpy()
+    
+    dice_scores = {}
+    # Calculate Dice for each structure (excluding background)
+    for i, label in enumerate(['LV', 'MYO', 'RV']):
+        # Convert to binary masks using 0.5 threshold
+        gt_mask = (ground_truth[i+1] > 0.5).astype(float)
+        gen_mask = (generated[i+1] > 0.5).astype(float)
+        
+        # Calculate Dice coefficient: 2|X∩Y|/(|X|+|Y|)
+        intersection = np.sum(gt_mask * gen_mask)
+        dice = (2.0 * intersection) / (np.sum(gt_mask) + np.sum(gen_mask) + 1e-6)
+        dice_scores[label] = dice
+    
+    # Calculate average Dice
+    dice_scores['average'] = np.mean(list(dice_scores.values()))
+    
+    return dice_scores
+
+
 def extract_slice_and_meta(volume, center, normal, slice_shape=(128, 128), pixel_spacing=1.0, to_degrees=True):
     """
     Extracts a 2D slice from a 3D segmentation label map along a plane defined by
@@ -91,8 +125,9 @@ def extract_slice_and_meta(volume, center, normal, slice_shape=(128, 128), pixel
 
 def plot_loss_curves(history_file, save_dir=None):
     """
-    Plot training and validation loss curves from the history file.
+    Plot training and validation loss curves from the history file with log scale.
     Training metrics are plotted for every epoch, while validation metrics are plotted every 10 epochs.
+    KL and reconstruction losses are plotted on different y-axes for better visualization.
     
     Args:
         history_file (str): Path to the JSON file containing loss history
@@ -105,40 +140,55 @@ def plot_loss_curves(history_file, save_dir=None):
     # Create figure with subplots
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12))
     
-    # Plot total loss
-    # Training loss for all epochs
-    ax1.plot(history['epochs'], history['train_loss'], label='Training Loss', alpha=0.7)
-    # Validation loss every 10 epochs
+    # Plot total loss with log scale
+    ax1.semilogy(history['epochs'], history['train_loss'], label='Training Loss', alpha=0.7)
     val_epochs = history['epochs'][9::10]  # Every 10th epoch
-    val_losses = history['val_loss']  # Every 10th validation loss
-    ax1.plot(val_epochs, val_losses, 'o-', label='Validation Loss', alpha=0.7)
+    val_losses = history['val_loss']
+    ax1.semilogy(val_epochs, val_losses, 'o-', label='Validation Loss', alpha=0.7)
     ax1.set_xlabel('Epoch')
-    ax1.set_ylabel('Loss')
+    ax1.set_ylabel('Loss (log scale)')
     ax1.set_title('Total Loss Curves')
     ax1.legend()
-    ax1.grid(True)
+    ax1.grid(True, which="both", ls="-", alpha=0.2)
     
-    # Plot reconstruction and KL losses
-    # Training losses for all epochs
-    ax2.plot(history['epochs'], history['train_recon'], label='Training Recon Loss', alpha=0.7)
-    ax2.plot(history['epochs'], history['train_kl'], label='Training KL Loss', alpha=0.7)
-    # Validation losses every 10 epochs
-    val_recon = history['val_recon']  # Every 10th validation recon loss
-    val_kl = history['val_kl']  # Every 10th validation KL loss
-    ax2.plot(val_epochs, val_recon, 'o-', label='Validation Recon Loss', alpha=0.7)
-    ax2.plot(val_epochs, val_kl, 'o-', label='Validation KL Loss', alpha=0.7)
+    # Plot reconstruction and KL losses with two y-axes
+    ax2_kl = ax2.twinx()  # Create second y-axis
+    
+    # Plot reconstruction loss on left y-axis (log scale)
+    recon_lines = []
+    l1 = ax2.semilogy(history['epochs'], history['train_recon'], 
+                      label='Training Recon Loss', alpha=0.7, color='C0')[0]
+    l2 = ax2.semilogy(val_epochs, history['val_recon'], 'o-',
+                      label='Validation Recon Loss', alpha=0.7, color='C1')[0]
+    recon_lines.extend([l1, l2])
     ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Loss')
+    ax2.set_ylabel('Reconstruction Loss (log scale)', color='C0')
+    ax2.tick_params(axis='y', labelcolor='C0')
+    
+    # Plot KL loss on right y-axis
+    kl_lines = []
+    l3 = ax2_kl.plot(history['epochs'], history['train_kl'],
+                     label='Training KL Loss', alpha=0.7, color='C2')[0]
+    l4 = ax2_kl.plot(val_epochs, history['val_kl'], 'o-',
+                     label='Validation KL Loss', alpha=0.7, color='C3')[0]
+    kl_lines.extend([l3, l4])
+    ax2_kl.set_ylabel('KL Loss', color='C2')
+    ax2_kl.tick_params(axis='y', labelcolor='C2')
+    
+    # Add combined legend
+    all_lines = recon_lines + kl_lines
+    all_labels = [line.get_label() for line in all_lines]
+    ax2.legend(all_lines, all_labels, loc='upper right')
+    
     ax2.set_title('Reconstruction and KL Loss Curves')
-    ax2.legend()
-    ax2.grid(True)
+    ax2.grid(True, which="both", ls="-", alpha=0.2)
     
     plt.tight_layout()
     
     if save_dir:
         # Extract model config from filename
         filename = os.path.basename(history_file)
-        plot_name = filename.replace('loss_history', 'loss_curves').replace('.json', '.png')
+        plot_name = filename.replace('loss_history', 'loss_curves').replace('.json', '_log.png')
         save_path = os.path.join(save_dir, plot_name)
         plt.savefig(save_path)
         print(f"Plot saved to {save_path}")

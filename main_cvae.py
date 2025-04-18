@@ -9,13 +9,13 @@ def run_experiments():
         'root_dir': "Dataset",
         'batch_size': 16,
         'learning_rate': 0.0001,
-        'epochs': 200,
+        'epochs': 250,
         'validation_interval': 10,
         'checkpoint_dir': "checkpoints/cvae"
     }
     
     # Hyperparameters to test
-    z_dims = [32, 64, 128]  # Different latent space dimensions
+    z_dims = [16, 32, 64, 128]  # Different latent space dimensions
     betas = [0.0001, 0.001, 0.01]  # Different KL loss weights
     
     # Results storage
@@ -55,7 +55,6 @@ def run_experiments():
                 'final_val_kl': history['val_kl'][-1]
             }
             results.append(result)
-            
             # Plot loss curves
             history_file = os.path.join(config['checkpoint_dir'], f"loss_history_z{z_dim}_beta{beta}.json")
             plot_loss_curves(history_file, results_dir)

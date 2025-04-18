@@ -127,6 +127,55 @@ def train(model, train_loader, val_loader, optimizer, device, beta=1.0, epochs=2
     
     return history
 
+def test(model, test_loader, device, beta=1.0):
+    """
+    Test function to evaluate model performance on test set
+    
+    Args:
+        model: The VAE model
+        test_loader: DataLoader for test data
+        device: Device to run the model on
+        beta: Beta parameter for VAE loss
+    
+    Returns:
+        dict: Dictionary containing test metrics
+    """
+    model.eval()
+    test_loss = 0.0
+    test_recon_loss = 0.0
+    test_kl_loss = 0.0
+    total_test_samples = 0
+
+    with torch.no_grad():
+        for batch in tqdm(test_loader, desc="Testing"):
+            volume = batch['volume'].to(device)
+            slices = batch['slices'].to(device)
+            meta = batch['meta'].to(device)
+            
+            recon, mu, logvar = model(volume, slices, meta)
+            target = torch.argmax(volume, dim=1)
+            loss, recon_loss, kl_loss = vae_loss(recon, target, mu, logvar, beta)
+
+            test_loss += loss.item() * slices.size(0)
+            test_recon_loss += recon_loss.item() * slices.size(0)
+            test_kl_loss += kl_loss.item() * slices.size(0)
+            total_test_samples += slices.size(0)
+
+    avg_test_loss = test_loss / total_test_samples
+    avg_test_recon = test_recon_loss / total_test_samples
+    avg_test_kl = test_kl_loss / total_test_samples
+
+    test_results = {
+        'test_loss': avg_test_loss,
+        'test_recon': avg_test_recon,
+        'test_kl': avg_test_kl
+    }
+    
+    print(f"Test Results:")
+    print(f"Loss: {avg_test_loss:.4f} | Recon: {avg_test_recon:.4f} | KL: {avg_test_kl:.4f}")
+    
+    return test_results
+
 def train_with_config(config):
     """Train the model with given configuration."""
     # Extract config
@@ -202,6 +251,20 @@ def train_with_config(config):
         beta=beta, epochs=epochs, validation_interval=validation_interval,
         checkpoint_dir=checkpoint_dir, z_dim=z_dim
     )
+    
+    # Load the best model for testing
+    best_model_path = f"{checkpoint_dir}/best_cvae_z{z_dim}_beta{beta}.pth"
+    print(f"\nLoading best model from {best_model_path}")
+    model.load_state_dict(torch.load(best_model_path))
+    
+    # Evaluate best model on test set
+    print("\nEvaluating best model on test set...")
+    test_results = test(model, test_loader, device, beta=beta)
+    
+    # Save test results
+    history['test_results'] = test_results
+    with open(f"{checkpoint_dir}/loss_history_z{z_dim}_beta{beta}.json", 'w') as f:
+        json.dump(history, f)
     
     return history
 
