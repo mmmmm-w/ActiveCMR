@@ -1,7 +1,10 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import os
 import json
 from train_vae import train_with_config
-from utils import plot_loss_curves
+from active_cmr.utils import plot_loss_curves
 
 def run_experiments():
     # Base configuration

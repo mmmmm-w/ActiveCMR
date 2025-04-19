@@ -1,7 +1,10 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import torch
-from model import GenVAE3D_conditional
-from dataset import CardiacSliceDataset
-from utils import visualize_3d_volume_matplotlib, calculate_dice
+from active_cmr.model import GenVAE3D_conditional
+from active_cmr.dataset import CardiacSliceDataset
+from active_cmr.utils import visualize_3d_volume_matplotlib, calculate_dice
 from torch.utils.data import DataLoader
 
 

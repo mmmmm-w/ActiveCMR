@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import torch
 import torch.nn.functional as F
 from torch.utils.data import random_split, DataLoader
@@ -6,8 +9,8 @@ import os
 import json
 
 # === Load your model ===
-from model import GenVAE3D  # adjust path accordingly
-from dataset import CardiacReconstructionDataset  # your dataset
+from active_cmr.model import GenVAE3D  # adjust path accordingly
+from active_cmr.dataset import CardiacReconstructionDataset  # your dataset
 
 # === Loss Function ===
 def vae_loss(recon_logits, target, mu, logvar, beta=0.001):

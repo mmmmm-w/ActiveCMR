@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import os
 import json
 import torch
@@ -7,9 +10,9 @@ from torch.utils.data import DataLoader, random_split
 from pathlib import Path
 from tqdm import tqdm
 
-from dataset import CardiacSliceDataset
-from model import GenVAE3D_conditional
-from utils import plot_loss_curves
+from active_cmr.dataset import CardiacSliceDataset
+from active_cmr.model import GenVAE3D_conditional
+from active_cmr.utils import plot_loss_curves
 
 def vae_loss(recon_logits, target, mu, logvar, beta=0.001):
     """

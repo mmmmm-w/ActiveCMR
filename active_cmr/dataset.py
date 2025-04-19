@@ -6,7 +6,7 @@ import nibabel as nib
 import numpy as np
 from torch.utils.data import Dataset
 from pathlib import Path
-from ActiveCMR.utils import center_crop, label2onehot, get_label_center, crop_around_center, extract_slice_and_meta
+from .utils import center_crop, label2onehot, get_label_center, crop_around_center, extract_slice_and_meta
 
 class CardiacReconstructionDataset(Dataset):
     def __init__(self, root_dir):
