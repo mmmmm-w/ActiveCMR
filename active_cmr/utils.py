@@ -48,11 +48,11 @@ def calculate_dice(ground_truth, generated):
 def extract_slice_and_meta(volume, center, normal, slice_shape=(128, 128), pixel_spacing=1.0, to_degrees=True):
     """
     Extracts a 2D slice from a 3D segmentation label map along a plane defined by
-    a center (x, y, z) and a normal vector.
+    a center (z, x, y) and a normal vector.
     
     Parameters:
       volume (np.ndarray): 3D segmentation label map with shape (D, H, W).
-      center (array-like): Center of the slicing plane in (x, y, z) coordinates.
+      center (array-like): Center of the slicing plane in (z, x, y) coordinates.
       normal (array-like): Normal vector of the slicing plane (defines orientation).
       slice_shape (tuple): Desired shape (height, width) of the 2D slice.
       pixel_spacing (float): Spacing between pixels in the extracted slice.
@@ -64,10 +64,6 @@ def extract_slice_and_meta(volume, center, normal, slice_shape=(128, 128), pixel
                     - 'center': The center coordinate as [x, y, z].
                     - 'theta': Azimuth angle of the normal (from x-axis in the x-y plane).
                     - 'phi': Angle from the z-axis.
-                    
-    Note:
-      - The volume is assumed to use the (z, y, x) order. The provided center is in (x, y, z) coordinates.
-      - Nearest neighbor interpolation is used (order=0) since the volume contains label data.
     """
     # Ensure inputs are numpy arrays and normalize the normal vector
     center = np.array(center, dtype=np.float32)

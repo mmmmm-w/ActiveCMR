@@ -4,7 +4,8 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import torch
 from active_cmr.model import GenVAE3D_conditional
 from active_cmr.dataset import CardiacSliceDataset
-from active_cmr.pipeline import InferencePipeline, RandomInferencePipeline, UncertaintyPolicy, RandomPolicy
+from active_cmr.pipeline import InferencePipeline
+from active_cmr.policy import *
 import numpy as np
 from active_cmr.utils import onehot2label
 
@@ -14,7 +15,7 @@ if __name__ == "__main__":
     beta = 0.001
     scan_budget = 5
     num_samples = 16
-    temperature = 0.1
+    temperature = 0.5
     checkpoint_path = f"checkpoints/cvae/z{z_dim}_beta{beta}/best_cvae_z{z_dim}_beta{beta}.pth"
 
     model = GenVAE3D_conditional(
@@ -31,9 +32,6 @@ if __name__ == "__main__":
     model = model.to(device)
     model.eval()
 
-    pipeline = InferencePipeline(model=model, policy_class=UncertaintyPolicy, volume_size=(64,128,128), num_samples=num_samples, temperature=temperature)
-    random_pipeline = InferencePipeline(model=model, policy_class=RandomPolicy, volume_size=(64,128,128), num_samples=num_samples, temperature=temperature)
-
     dataset = CardiacSliceDataset(root_dir="Dataset", 
                                 state="HR_ED",   
                                 volume_size=(64, 128, 128),
@@ -45,9 +43,24 @@ if __name__ == "__main__":
     print(f"Scanning sample {index}")
     random_sample = dataset[index]
     ground_truth_volume = onehot2label(random_sample['volume']) #[64, 128, 128]
+    pipeline = InferencePipeline(model=model, volume_size=(64,128,128), num_samples=num_samples, temperature=temperature)
 
     print("Running active learning pipeline")
-    pipeline.run_inference(ground_truth_volume, scan_budget=scan_budget)
+    pipeline.run_inference(ground_truth_volume, policy_class=SampleVariancePolicy, scan_budget=scan_budget)
+    print("#"*70)
 
     print("Running random sampling pipeline")
-    random_pipeline.run_inference(ground_truth_volume, scan_budget=scan_budget)
+    pipeline.run_inference(ground_truth_volume, policy_class=RandomPolicy, scan_budget=scan_budget)
+    print("#"*70)
+
+    print("Running sequential sampling pipeline")
+    pipeline.run_inference(ground_truth_volume, policy_class=SequentialPolicy, scan_budget=scan_budget)
+    print("#"*70)
+
+    print("Running alternating sampling pipeline")
+    pipeline.run_inference(ground_truth_volume, policy_class=AlternatingPolicy, scan_budget=scan_budget)
+    print("#"*70)
+
+    print("Running max gradient sampling pipeline")
+    pipeline.run_inference(ground_truth_volume, policy_class=MaxGradientPolicy, scan_budget=scan_budget)
+    print("#"*70)
