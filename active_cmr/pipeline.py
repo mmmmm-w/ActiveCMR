@@ -90,7 +90,7 @@ class InferencePipeline:
         self.scanned_slices = []
         self.dice_history = []
     
-    def run_inference(self, volume, policy_class: ScanPolicy, scan_budget: int):
+    def run_inference(self, volume, policy_class: ScanPolicy, scan_budget: int, log=False):
         """Run inference pipeline"""
         self.clear_history()
         device = next(self.model.parameters()).device
@@ -121,9 +121,10 @@ class InferencePipeline:
             # Calculate and store dice score
             mean_dice_scores = self.calculate_dice(samples.cpu(), volume_onehot.cpu())
             self.dice_history.append(mean_dice_scores)
-            print(
-                f"Scan {len(self.scanned_slices)} at z={z}, "
-                f"LV: {mean_dice_scores[1]:.3f}, "
+            if log:
+                print(
+                    f"Scan {len(self.scanned_slices)} at z={z}, "
+                    f"LV: {mean_dice_scores[1]:.3f}, "
                 f"MYO: {mean_dice_scores[2]:.3f}, "
                 f"RV: {mean_dice_scores[3]:.3f}, "
                 f"Avg: {np.mean([mean_dice_scores[1], mean_dice_scores[2], mean_dice_scores[3]]):.3f}"
@@ -131,10 +132,9 @@ class InferencePipeline:
             # Get next position from policy
             z = policy.get_next_position(samples)
             
-            
             # Take new scan
             slice_data, meta = self.scan(volume, z)
             self.scanned_slices.append((slice_data, meta))
             policy.update(z)
         
-        return self.dice_history
+        return samples[0], self.dice_history, self.scanned_slices

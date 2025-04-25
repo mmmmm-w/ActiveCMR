@@ -11,6 +11,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.ndimage import map_coordinates
 
+
+#METRICS
 def calculate_dice(ground_truth, generated):
     """
     Calculate Dice coefficient for each anatomical structure (LV, MYO, RV)
@@ -44,7 +46,7 @@ def calculate_dice(ground_truth, generated):
     
     return dice_scores
 
-
+#VISUALIZATION
 def extract_slice_and_meta(volume, center, normal, slice_shape=(128, 128), pixel_spacing=1.0, to_degrees=True):
     """
     Extracts a 2D slice from a 3D segmentation label map along a plane defined by
@@ -119,6 +121,107 @@ def extract_slice_and_meta(volume, center, normal, slice_shape=(128, 128), pixel
     
     return slice_2d, meta
 
+def extract_slice_and_meta_torch(volume: torch.Tensor, 
+                                 center: torch.Tensor, 
+                                 normal: torch.Tensor, 
+                                 slice_shape=(128, 128), 
+                                 pixel_spacing=1.0, 
+                                 to_degrees=True,
+                                 device='cpu'):
+    """
+    Extracts a 2D slice from a 3D volume using PyTorch along a plane defined by
+    a center (z, x, y) and a normal vector.
+
+    Parameters:
+      volume (torch.Tensor): 3D volume with shape (D, H, W) on the specified device.
+      center (torch.Tensor): Center of the slicing plane in (z, x, y) coordinates (1D tensor of size 3).
+      normal (torch.Tensor): Normal vector of the slicing plane (1D tensor of size 3).
+      slice_shape (tuple): Desired shape (height, width) of the 2D slice.
+      pixel_spacing (float): Spacing between pixels in the extracted slice.
+      to_degrees (bool): If True, returns theta and phi in degrees.
+      device (str or torch.device): Device to perform computations on ('cpu' or 'cuda').
+
+    Returns:
+      slice_2d (torch.Tensor): The 2D segmentation slice on the specified device.
+      meta (dict): Metadata containing:
+                    - 'center': The center coordinate as a list [z, x, y].
+                    - 'theta': Azimuth angle of the normal (from x-axis in the x-y plane).
+                    - 'phi': Angle from the z-axis.
+    """
+    volume = volume.to(device).float()
+    center = torch.as_tensor(center, dtype=torch.float32, device=device)
+    normal = torch.as_tensor(normal, dtype=torch.float32, device=device)
+    normal = normal / torch.linalg.norm(normal)
+
+    # Compute orientation angles
+    theta = torch.arctan2(normal[1], normal[0])
+    phi = torch.arccos(normal[2])
+    if to_degrees:
+        theta = torch.rad2deg(theta)
+        phi = torch.rad2deg(phi)
+
+    # Compute orthonormal vectors spanning the plane
+    if abs(normal[0]) > abs(normal[1]):
+        v1 = torch.tensor([-normal[2], 0, normal[0]], dtype=torch.float32, device=device)
+    else:
+        v1 = torch.tensor([0, normal[2], -normal[1]], dtype=torch.float32, device=device)
+    v1 = v1 / torch.linalg.norm(v1)
+    v2 = torch.linalg.cross(normal, v1)
+
+    # Create grid coordinates in the plane
+    h, w = slice_shape
+    grid_y_coords = (torch.arange(h, device=device) - h / 2) * pixel_spacing
+    grid_x_coords = (torch.arange(w, device=device) - w / 2) * pixel_spacing
+    grid_x, grid_y = torch.meshgrid(grid_x_coords, grid_y_coords, indexing='xy') # HxW grids
+
+    # Compute 3D coordinates for each grid point
+    # grid_points shape: (H, W, 3) in (z, x, y) order
+    grid_points = center.view(1, 1, 3) + \
+                  grid_x.unsqueeze(-1) * v1.view(1, 1, 3) + \
+                  grid_y.unsqueeze(-1) * v2.view(1, 1, 3)
+
+    # --- Prepare for grid_sample ---
+    # grid_sample expects input shape (N, C, D_in, H_in, W_in)
+    # and grid shape (N, D_out, H_out, W_out, 3) with coordinates in (x, y, z) order [-1, 1]
+    
+    # Reshape volume: (D, H, W) -> (1, 1, D, H, W)
+    volume_unsqueezed = volume.unsqueeze(0).unsqueeze(0)
+    D, H_vol, W_vol = volume.shape
+
+    # Normalize grid_points to [-1, 1] based on volume dimensions
+    # Original grid_points are (z, x, y), need to map to grid_sample's (x_norm, y_norm, z_norm)
+    normalized_grid = torch.zeros_like(grid_points)
+    normalized_grid[..., 0] = (grid_points[..., 1] / (W_vol - 1)) * 2 - 1  # Normalize x -> W
+    normalized_grid[..., 1] = (grid_points[..., 2] / (H_vol - 1)) * 2 - 1  # Normalize y -> H
+    normalized_grid[..., 2] = (grid_points[..., 0] / (D - 1)) * 2 - 1      # Normalize z -> D
+
+    # Reshape grid for grid_sample: (H_slice, W_slice, 3) -> (1, H_slice, W_slice, 1, 3)
+    # We want a 2D slice, so D_out=1. grid_sample needs 5D grid for 3D input.
+    sampling_grid = normalized_grid.unsqueeze(0).unsqueeze(-2) # Shape: (1, H, W, 1, 3)
+
+    # Perform sampling
+    # mode='nearest' corresponds to order=0 interpolation
+    # padding_mode='border' clamps coordinates to the edge, similar to mode='nearest' in map_coordinates
+    slice_sampled = F.grid_sample(
+        volume_unsqueezed, 
+        sampling_grid, 
+        mode='nearest', 
+        padding_mode='border', 
+        align_corners=True # Important for consistency with how coordinates were calculated
+    )
+
+    # Reshape output: (1, 1, 1, H, W) -> (H, W)
+    slice_2d = slice_sampled.squeeze()
+
+    # Package metadata
+    meta = {
+        'center': center.cpu().tolist(),
+        'theta': theta.item() if torch.is_tensor(theta) else theta,
+        'phi': phi.item() if torch.is_tensor(phi) else phi,
+    }
+
+    return slice_2d, meta
+
 def plot_loss_curves(history_file, save_dir=None):
     """
     Plot training and validation loss curves from the history file with log scale.
@@ -191,42 +294,6 @@ def plot_loss_curves(history_file, save_dir=None):
     else:
         plt.show()
 
-def label2onehot(labelmap, classes=(0, 1, 2, 4)):
-    """
-    Convert label map [D, H, W] to one-hot [C, D, H, W] for given classes.
-
-    Args:
-        labelmap (Tensor): shape [D, H, W], int values in {0, 1, 2, 4}
-        classes (tuple): class values to include as one-hot channels
-    
-    Returns:
-        Tensor: shape [C, D, H, W], float32
-    """
-    labelmap[labelmap == 3] = 0 # remap class 3 to 0
-    return torch.stack([(labelmap == c).float() for c in classes], dim=0)
-
-def onehot2label(seg_onehot):
-    """
-    Convert one-hot [C, D, H, W] → label map [D, H, W] with values {0,1,2,4}
-
-    Args:
-        seg_onehot (Tensor or np.ndarray): shape [4, D, H, W]
-    
-    Returns:
-        Tensor or np.ndarray: shape [D, H, W], with labels {0,1,2,4}
-    """
-    if isinstance(seg_onehot, torch.Tensor):
-        labelmap = torch.argmax(seg_onehot, dim=0)  # shape: [D, H, W]
-        # remap class index 3 → label 4
-        labelmap = labelmap.clone()  # avoid in-place overwrite
-        labelmap[labelmap == 3] = 4
-        return labelmap
-    else:
-        labelmap = np.argmax(seg_onehot, axis=0)
-        labelmap = labelmap.copy()
-        labelmap[labelmap == 3] = 4
-        return labelmap
-
 def show_label_map_slices_XYZ(volume, axis='axial', num_slices=20, cmap='gray'):
     """
     Visualize slices of a 3D volume assumed to be in (X, Y, Z) order.
@@ -261,6 +328,55 @@ def show_label_map_slices_XYZ(volume, axis='axial', num_slices=20, cmap='gray'):
         plt.title(f"{title} {indices[i]}")
         plt.axis('off')
     plt.tight_layout()
+    plt.show()
+
+def visualize_scan_and_sample(sample, scanned_slices, threshold=0.5):
+    """
+    Visualize scan planes (as red planes) and generated sample (as 3D scatter)
+    in the same 3D plot.
+    
+    Args:
+        scanned_slices (list): List of tuples (slice_data, meta) from inference pipeline
+        generated_sample (torch.Tensor): Generated 3D volume [C, D, H, W]
+        threshold (float): Threshold for visualization (default: 0.5)
+    """
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Plot generated sample as scatter points
+    # Create coordinates for each point
+    x, y, z = np.where(sample > threshold)
+    
+    # Plot 3D scatter
+    scatter = ax.scatter(x, y, z, 
+                        c=sample[x, y, z],
+                        cmap='viridis',
+                        alpha=0.1,
+                        marker='.')
+    
+    # Plot scan planes
+    for _, meta in scanned_slices[:-1]:
+        center = meta[:3].numpy()  # [z, x, y]
+        
+        # Create a planar surface at each scan position
+        xx, yy = np.meshgrid(
+            np.linspace(-64, 64, 10),
+            np.linspace(-64, 64, 10)
+        )
+        zz = np.full_like(xx, center[0])  # z-position from meta
+        
+        # Plot the plane
+        ax.plot_surface(
+            xx + center[2],  # Center x
+            yy + center[1],  # Center y
+            zz,             # Fixed z position
+            alpha=0.2,
+            color='red'
+        )
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    plt.title('Generated Sample with Scan Planes')
     plt.show()
 
 def visualize_3d_volume_plotly(volume, threshold=0.5):
@@ -313,6 +429,43 @@ def visualize_3d_volume_matplotlib(volume, threshold=0.5):
     ax.set_zlabel('Z')
     plt.title('3D Volume Visualization')
     plt.show()
+
+#UTILS
+def label2onehot(labelmap, classes=(0, 1, 2, 4)):
+    """
+    Convert label map [D, H, W] to one-hot [C, D, H, W] for given classes.
+
+    Args:
+        labelmap (Tensor): shape [D, H, W], int values in {0, 1, 2, 4}
+        classes (tuple): class values to include as one-hot channels
+    
+    Returns:
+        Tensor: shape [C, D, H, W], float32
+    """
+    labelmap[labelmap == 3] = 0 # remap class 3 to 0
+    return torch.stack([(labelmap == c).float() for c in classes], dim=0)
+
+def onehot2label(seg_onehot):
+    """
+    Convert one-hot [C, D, H, W] → label map [D, H, W] with values {0,1,2,4}
+
+    Args:
+        seg_onehot (Tensor or np.ndarray): shape [4, D, H, W]
+    
+    Returns:
+        Tensor or np.ndarray: shape [D, H, W], with labels {0,1,2,4}
+    """
+    if isinstance(seg_onehot, torch.Tensor):
+        labelmap = torch.argmax(seg_onehot, dim=0)  # shape: [D, H, W]
+        # remap class index 3 → label 4
+        labelmap = labelmap.clone()  # avoid in-place overwrite
+        labelmap[labelmap == 3] = 4
+        return labelmap
+    else:
+        labelmap = np.argmax(seg_onehot, axis=0)
+        labelmap = labelmap.copy()
+        labelmap[labelmap == 3] = 4
+        return labelmap
 
 def get_label_center(volume):
     """
@@ -618,11 +771,6 @@ def create_interactive_comparison(checkpoint_dir):
     )
     
     return fig
-
-def show_interactive_comparison(checkpoint_dir, host='0.0.0.0', port=8050):
-    """Shows the interactive comparison plot with specified host and port."""
-    fig = create_interactive_comparison(checkpoint_dir)
-    fig.show(host=host, port=port)
 
 def test_extract_slice():
     # Create a simple test volume with a recognizable pattern

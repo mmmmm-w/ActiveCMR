@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 
-
 class ScanPolicy:
     """Base class for scan policies"""
     def __init__(self, volume_size, scan_budget):
@@ -130,8 +129,8 @@ class AnatomicalPolicy(ScanPolicy):
     - Samples more densely around valve planes and apex
     - Ensures coverage of all cardiac chambers
     """
-    def __init__(self, volume_size):
-        super().__init__(volume_size)
+    def __init__(self, volume_size, scan_budget):
+        super().__init__(volume_size, scan_budget)
         # Approximate positions for cardiac landmarks (in normalized z-coordinates)
         self.landmarks = {
             'base': 0.8,    # near the valve plane
@@ -172,8 +171,8 @@ class GradientPhysicsPolicy(ScanPolicy):
     - Ensures smooth transitions between scanned regions
     - Focuses on areas of high anatomical change
     """
-    def __init__(self, volume_size):
-        super().__init__(volume_size)
+    def __init__(self, volume_size, scan_budget):
+        super().__init__(volume_size, scan_budget)
         
     def get_next_position(self, samples):
         if samples is None:
@@ -276,3 +275,78 @@ class SampleVariancePolicy(ScanPolicy):
             z_uncertainty[start:end] = float('-inf')
         
         return torch.argmax(z_uncertainty).item()
+    
+class HybridPolicy(ScanPolicy):
+    """
+    Hybrid policy that combines sequential and uncertainty-based scanning:
+    - First half of budget: Sequential scanning for even coverage
+    - Second half: Uncertainty-based scanning for refinement
+    """
+    def __init__(self, volume_size, scan_budget):
+        super().__init__(volume_size, scan_budget)
+        self.sequential_steps = scan_budget // 2  # First half uses sequential
+        self.neighborhood_size = 3
+        
+    def get_first_position(self):
+        """Start with first sequential position"""
+        return self.volume_size[0] // (self.sequential_steps + 1)
+    
+    def get_sequential_position(self):
+        """Get next position using sequential strategy"""
+        step_size = self.volume_size[0] // (self.sequential_steps + 1)
+        next_z = (len(self.scanned_positions) + 1) * step_size
+        return next_z
+    
+    def calculate_uncertainty(self, samples):
+        """Calculate uncertainty based on sample variance"""
+        # Convert to probabilities
+        probs = torch.softmax(samples, dim=1)  # [num_samples, 4, D, H, W]
+        
+        # Calculate variance across samples
+        variance = torch.var(probs, dim=0)  # [4, D, H, W]
+        total_variance = torch.sum(variance, dim=0)  # [D, H, W]
+        
+        # Calculate distance penalty
+        distance_penalty = torch.ones_like(total_variance)
+        for z in self.scanned_positions:
+            z_dist = torch.arange(self.volume_size[0], device=total_variance.device)
+            
+            # Hard penalty for immediate neighbors
+            neighbor_mask = torch.abs(z_dist - z) <= self.neighborhood_size
+            distance_penalty[neighbor_mask] *= 0.1
+            
+            # Exponential penalty for other positions
+            z_penalty = torch.exp(((z_dist - z) / (self.volume_size[0]))**2)
+            distance_penalty *= z_penalty.view(-1, 1, 1)
+        
+        # Normalize variance and apply penalty
+        variance_norm = (total_variance - total_variance.min()) / (total_variance.max() - total_variance.min() + 1e-10)
+        return variance_norm * distance_penalty
+
+    def get_uncertainty_position(self, samples):
+        """Get next position using uncertainty strategy"""
+        uncertainty = self.calculate_uncertainty(samples)
+        z_uncertainty = torch.mean(uncertainty, dim=(1,2))  # Average over H,W
+        
+        # Mask out already scanned positions and their neighborhoods
+        for z in self.scanned_positions:
+            start = max(0, z - self.neighborhood_size)
+            end = min(self.volume_size[0], z + self.neighborhood_size + 1)
+            z_uncertainty[start:end] = float('-inf')
+        
+        return torch.argmax(z_uncertainty).item()
+
+    def get_next_position(self, samples):
+        """
+        Choose strategy based on current scan count:
+        - First half: Sequential
+        - Second half: Uncertainty-based
+        """
+        current_scan_count = len(self.scanned_positions)
+        
+        if current_scan_count < self.sequential_steps:
+            # Use sequential strategy for first half
+            return self.get_sequential_position()
+        else:
+            # Use uncertainty-based strategy for second half
+            return self.get_uncertainty_position(samples)
