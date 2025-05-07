@@ -1,7 +1,9 @@
 import torch
 import numpy as np
-from active_cmr.utils import extract_slice_and_meta, label2onehot
+from active_cmr.utils import extract_slice_and_meta, label2onehot, onehot2label
 from active_cmr.policy import ScanPolicy
+import monai.metrics as mm
+import torch.nn.functional as F
 
 class InferencePipeline:
     def __init__(self, model, volume_size=(64,128,128), slice_size=(128,128), 
@@ -63,27 +65,23 @@ class InferencePipeline:
             ])
         
         return slice_tensor, meta_tensor
- 
     
     def calculate_dice(self, samples, ground_truth):
-        """Calculate Dice score for each class across samples"""
-        class_dice_scores = {1: [], 2: [], 3: []}  # Store dice scores for each class
+        """Calculate Dice score for each class (1–3) across samples using MONAI"""
+        pred_onehots = []
+
         for sample in samples:
-            # Convert to binary segmentation
-            pred = torch.argmax(sample, dim=0)  # [D, H, W]
-            gt = torch.argmax(ground_truth, dim=0)  # [D, H, W]
-            
-            # Calculate Dice for each class
-            for c in range(1, 4):  # exclude background
-                pred_c = (pred == c)
-                gt_c = (gt == c)
-                intersection = torch.sum(pred_c & gt_c)
-                dice = (2.0 * intersection) / (torch.sum(pred_c) + torch.sum(gt_c) + 1e-6)
-                class_dice_scores[c].append(dice.item())
-        
-        # Calculate mean dice for each class
-        mean_dice_scores = {c: np.mean(scores) for c, scores in class_dice_scores.items()}
-        
+            pred_onehot = label2onehot(onehot2label(sample)).to(bool)  # [C, D, H, W]
+            pred_onehots.append(pred_onehot)
+
+        # Stack predictions into [B, C, D, H, W]
+        pred_batch = torch.stack(pred_onehots, dim=0)
+        gt_batch = ground_truth.unsqueeze(0).expand(len(samples), -1, -1, -1, -1)  # repeat GT for each sample
+
+        # Compute Dice: [B, C]
+        dice_scores = mm.compute_dice(y_pred=pred_batch, y=gt_batch, include_background=False)
+
+        mean_dice_scores = {1: torch.mean(dice_scores[:, 0]), 2: torch.mean(dice_scores[:, 1]), 3: torch.mean(dice_scores[:, 2])}
         return mean_dice_scores
     
     def clear_history(self):
@@ -119,7 +117,7 @@ class InferencePipeline:
                 )
             
             # Calculate and store dice score
-            mean_dice_scores = self.calculate_dice(samples.cpu(), volume_onehot.cpu())
+            mean_dice_scores = self.calculate_dice(samples.to(device), volume_onehot.to(device))
             self.dice_history.append(mean_dice_scores)
             if log:
                 print(
@@ -127,7 +125,7 @@ class InferencePipeline:
                     f"LV: {mean_dice_scores[1]:.3f}, "
                 f"MYO: {mean_dice_scores[2]:.3f}, "
                 f"RV: {mean_dice_scores[3]:.3f}, "
-                f"Avg: {np.mean([mean_dice_scores[1], mean_dice_scores[2], mean_dice_scores[3]]):.3f}"
+                f"Avg: {np.mean([mean_dice_scores[1].cpu(), mean_dice_scores[2].cpu(), mean_dice_scores[3].cpu()]):.3f}"
             )
             # Get next position from policy
             z = policy.get_next_position(samples)
@@ -137,4 +135,4 @@ class InferencePipeline:
             self.scanned_slices.append((slice_data, meta))
             policy.update(z)
         
-        return samples[0], self.dice_history, self.scanned_slices
+        return torch.mean(samples, dim=0), self.dice_history, self.scanned_slices[:-1]

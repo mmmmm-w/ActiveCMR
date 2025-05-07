@@ -140,18 +140,13 @@ class CardiacSliceDataset(Dataset):
         # Get center of the labeled regions
         center = get_label_center(volume)
         
+        # Crop volume around the center
+        volume = crop_around_center(volume, self.volume_size, center)
+
         # Find the bounds of non-zero labels along z-axis (first dimension now)
         mask = volume > 0
         z_indices = torch.where(mask)[0]  # first dimension is Z now
         z_min, z_max = z_indices.min(), z_indices.max()
-        
-        # Crop volume around the center
-        volume = crop_around_center(volume, self.volume_size, center)
-        
-        # Adjust z_min and z_max for the cropped volume
-        z_offset = center[0] - self.volume_size[0] // 2
-        z_min = max(0, min(z_min - z_offset, self.volume_size[0]-1))
-        z_max = max(0, min(z_max - z_offset, self.volume_size[0]-1))
         
         return volume, center, (z_min, z_max)
 
@@ -195,7 +190,7 @@ class CardiacSliceDataset(Dataset):
         # Load and preprocess volume
         volume, volume_center, z_bounds = self._load_volume(subject_path)
         
-        # Generate slice parameters with z_bounds
+        # Generate slice parameters
         centers, normals = self._get_slice_params(volume.shape, self.num_slices, z_bounds)
         
         # Extract slices and collect metadata

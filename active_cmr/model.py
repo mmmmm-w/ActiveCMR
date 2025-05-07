@@ -25,8 +25,10 @@ class ConditionEncoder(nn.Module):
             nn.ReLU(),
             nn.AdaptiveAvgPool2d((8, 8))
         )
-        self.fc_meta = nn.Linear(5, 64)
-        self.fc_out = nn.Linear(64 * 8 * 8 + 64, emb_dim)
+        # self.fc_meta = nn.Linear(5, 64)
+        # self.fc_out = nn.Linear(64 * 8 * 8 + 64, emb_dim)
+        self.fc_meta = nn.Sequential(nn.Linear(5, 128), nn.ReLU(), nn.Linear(128, 64))
+        self.fc_out = nn.Sequential(nn.Linear(64 * 8 * 8 + 64, 128), nn.ReLU(), nn.Linear(128, emb_dim))
 
     def forward(self, label_maps, metas):
         """
@@ -55,6 +57,37 @@ class ConditionAttentionAggregator(nn.Module):
         """
         attn_out, _ = self.attn(cond_embs, cond_embs, cond_embs)
         return attn_out.mean(dim=1)  # [B, emb_dim]
+
+class ConditionTransformerAggregator(nn.Module):
+    def __init__(self, emb_dim=128, n_heads=4, hidden_dim=512, num_layers=2, dropout=0.1):
+        super().__init__()
+        # Build a Transformer encoder layer
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=emb_dim,
+            nhead=n_heads,
+            dim_feedforward=hidden_dim,
+            dropout=dropout,
+            batch_first=True
+        )
+        # Stack multiple layers
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        # Final layer norm with a residual connection
+        self.norm = nn.LayerNorm(emb_dim)
+
+    def forward(self, cond_embs):
+        """
+        Args:
+            cond_embs (torch.Tensor): [B, M, emb_dim] sequence of condition embeddings
+        Returns:
+            torch.Tensor: [B, emb_dim] aggregated embedding
+        """
+        # Pass through Transformer
+        x = self.transformer(cond_embs)              # [B, M, emb_dim]
+        # Residual connection and normalization
+        x = self.norm(x + cond_embs)                 # [B, M, emb_dim]
+        # Pool over the M dimension
+        out = x.mean(dim=1)                          # [B, emb_dim]
+        return out
 
 # beta-VAE 3D for cardiac segmentation
 class GenVAE3D(nn.Module):

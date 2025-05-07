@@ -330,6 +330,32 @@ def show_label_map_slices_XYZ(volume, axis='axial', num_slices=20, cmap='gray'):
     plt.tight_layout()
     plt.show()
 
+def visualize_scanned_slices(scanned_slices):
+    """
+    Visualize all scanned slices in 2 rows, with scan position (z=meta[0]) as caption.
+
+    Args:
+        scanned_slices: list of dicts or objects with keys/attributes 'slice' ([4,128,128]) and 'meta' ([5])
+    """
+    n = len(scanned_slices)
+    ncols = (n + 1) // 2
+    fig, axes = plt.subplots(2, ncols, figsize=(4 * ncols, 8))
+    axes = axes.flatten() if n > 1 else [axes]
+
+    for i, scanned in enumerate(scanned_slices):
+        # Get the first channel (or you can loop over all 4 channels if you want)
+        img = torch.argmax(scanned[0], dim=0).cpu().numpy() if isinstance(scanned[0], torch.Tensor) else scanned[0]
+        z = scanned[1][0].item() if isinstance(scanned[1], torch.Tensor) else scanned[1][0]
+        ax = axes[i]
+        im = ax.imshow(img, cmap='nipy_spectral')
+        ax.set_title(f"Slice {i+1}, z = {z}")
+        ax.axis('off')
+    # Hide any unused subplots
+    for j in range(i+1, len(axes)):
+        axes[j].axis('off')
+    plt.tight_layout()
+    plt.show()
+
 def visualize_scan_and_sample(sample, scanned_slices, threshold=0.5):
     """
     Visualize scan planes (as red planes) and generated sample (as 3D scatter)
@@ -373,10 +399,12 @@ def visualize_scan_and_sample(sample, scanned_slices, threshold=0.5):
             alpha=0.2,
             color='red'
         )
+    ax.set_xlim(0, 128)
+    ax.set_ylim(0, 128)
+    ax.set_zlim(0, 64)
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
-    plt.title('Generated Sample with Scan Planes')
     plt.show()
 
 def visualize_3d_volume_plotly(volume, threshold=0.5):
@@ -422,12 +450,13 @@ def visualize_3d_volume_matplotlib(volume, threshold=0.5):
                         cmap='viridis',
                         alpha=0.1,
                         marker='.')
-    
-    plt.colorbar(scatter)
+    #force the plot to show 128*128*64
+    ax.set_xlim(0, 128)
+    ax.set_ylim(0, 128)
+    ax.set_zlim(0, 64)
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
-    plt.title('3D Volume Visualization')
     plt.show()
 
 #UTILS
@@ -447,13 +476,13 @@ def label2onehot(labelmap, classes=(0, 1, 2, 4)):
 
 def onehot2label(seg_onehot):
     """
-    Convert one-hot [C, D, H, W] → label map [D, H, W] with values {0,1,2,4}
+    Convert one-hot [C, D, H, W] → label map [D, H, W] with values {0,1,2,4}.
 
     Args:
         seg_onehot (Tensor or np.ndarray): shape [4, D, H, W]
     
     Returns:
-        Tensor or np.ndarray: shape [D, H, W], with labels {0,1,2,4}
+        Tensor or np.ndarray: shape [D, H, W], with labels {0,1,2,4}. 0 - bg, 1-LV, 2-MYO, 4-RV
     """
     if isinstance(seg_onehot, torch.Tensor):
         labelmap = torch.argmax(seg_onehot, dim=0)  # shape: [D, H, W]

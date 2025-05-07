@@ -14,9 +14,9 @@ from active_cmr.utils import onehot2label
 
 if __name__ == "__main__":
     # Load model
-    z_dim = 64
+    z_dim = 128
     beta = 0.001
-    scan_budget = 8
+    scan_budget = 10
     num_samples = 16
     temperature = 0.5
     checkpoint_path = f"checkpoints/cvae/z{z_dim}_beta{beta}/best_cvae_z{z_dim}_beta{beta}.pth"
@@ -43,19 +43,19 @@ if __name__ == "__main__":
 
     #pick a random sample from the dataset
     index = np.random.randint(0, len(dataset))
-    index = 1295
+    index = 1295 #1022, 1295
     print(f"Scanning sample {index}")
     random_sample = dataset[index]
     ground_truth_volume = onehot2label(random_sample['volume']) #[64, 128, 128]
     pipeline = InferencePipeline(model=model, volume_size=(64,128,128), num_samples=num_samples, temperature=temperature)
 
-    # print("Running active learning pipeline")
-    # pipeline.run_inference(ground_truth_volume, policy_class=SampleVariancePolicy, scan_budget=scan_budget, log=True)
-    # print("#"*70)
+    print("Running active learning pipeline")
+    pipeline.run_inference(ground_truth_volume, policy_class=SampleVariancePolicy, scan_budget=scan_budget, log=True)
+    print("#"*70)
 
-    # print("Running sequential sampling pipeline")
-    # pipeline.run_inference(ground_truth_volume, policy_class=SequentialPolicy, scan_budget=scan_budget, log=True)
-    # print("#"*70)
+    print("Running sequential sampling pipeline")
+    pipeline.run_inference(ground_truth_volume, policy_class=SequentialPolicy, scan_budget=scan_budget, log=True)
+    print("#"*70)
 
     print("Running hybrid sampling pipeline")
     pipeline.run_inference(ground_truth_volume, policy_class=HybridPolicy, scan_budget=scan_budget, log=True)
