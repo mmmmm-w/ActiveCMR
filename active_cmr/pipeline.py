@@ -88,51 +88,70 @@ class InferencePipeline:
         self.scanned_slices = []
         self.dice_history = []
     
-    def run_inference(self, volume, policy_class: ScanPolicy, scan_budget: int, log=False):
-        """Run inference pipeline"""
-        self.clear_history()
+    def process_single_scan(self, volume, policy, z, log=False):
+        """
+        Process a single scan iteration
+        
+        Args:
+            volume: ground truth volume
+            policy: scan policy instance
+            z: z position to scan
+            log: whether to print progress
+            
+        Returns:
+            tuple: (samples, mean_dice_scores, next_z, uncertainty_map)
+        """
         device = next(self.model.parameters()).device
         volume_onehot = label2onehot(volume)
-        policy = policy_class(self.volume_size, scan_budget)
         
-        # First scan
-        z = policy.get_first_position()
+        # Take scan at current position
         slice_data, meta = self.scan(volume, z_position=z)
         self.scanned_slices.append((slice_data, meta))
         policy.update(z)
 
-        while len(self.scanned_slices) <= scan_budget:
-            # Generate samples
-            slices = torch.stack([s for s, _ in self.scanned_slices])
-            metas = torch.stack([m for _, m in self.scanned_slices])
-            
-            slices = slices.unsqueeze(0).to(device)
-            metas = metas.unsqueeze(0).to(device)
+        # Generate samples
+        slices = torch.stack([s for s, _ in self.scanned_slices])
+        metas = torch.stack([m for _, m in self.scanned_slices])
+        
+        slices = slices.unsqueeze(0).to(device)
+        metas = metas.unsqueeze(0).to(device)
 
-            with torch.no_grad():
-                samples = self.model.inference(
-                    slices, metas,
-                    num_samples=self.num_samples,
-                    temperature=self.temperature
-                )
-            
-            # Calculate and store dice score
-            mean_dice_scores = self.calculate_dice(samples.to(device), volume_onehot.to(device))
-            self.dice_history.append(mean_dice_scores)
-            if log:
-                print(
-                    f"Scan {len(self.scanned_slices)} at z={z}, "
-                    f"LV: {mean_dice_scores[1]:.3f}, "
+        with torch.no_grad():
+            samples = self.model.inference(
+                slices, metas,
+                num_samples=self.num_samples,
+                temperature=self.temperature
+            )
+        
+        # Calculate dice score
+        mean_dice_scores = self.calculate_dice(samples.to(device), volume_onehot.to(device))
+        self.dice_history.append(mean_dice_scores)
+        
+        if log:
+            print(
+                f"Scan {len(self.scanned_slices)} at z={z}, "
+                f"LV: {mean_dice_scores[1]:.3f}, "
                 f"MYO: {mean_dice_scores[2]:.3f}, "
                 f"RV: {mean_dice_scores[3]:.3f}, "
                 f"Avg: {np.mean([mean_dice_scores[1].cpu(), mean_dice_scores[2].cpu(), mean_dice_scores[3].cpu()]):.3f}"
             )
-            # Get next position from policy
-            z = policy.get_next_position(samples)
             
-            # Take new scan
-            slice_data, meta = self.scan(volume, z)
-            self.scanned_slices.append((slice_data, meta))
-            policy.update(z)
+        # Get uncertainty map and next position from policy
+        uncertainty_map = policy.calculate_uncertainty(samples)
+        next_z = policy.get_next_position(samples)
+        
+        return samples, mean_dice_scores, next_z, uncertainty_map
+
+    def run_inference(self, volume, policy_class: ScanPolicy, scan_budget: int, log=False):
+        """Run inference pipeline"""
+        self.clear_history()
+        policy = policy_class(self.volume_size, scan_budget)
+        
+        # First scan
+        z = policy.get_first_position()
+        samples, _, z, _ = self.process_single_scan(volume, policy, z, log)
+
+        while len(self.scanned_slices) <= scan_budget:
+            samples, _, z, _ = self.process_single_scan(volume, policy, z, log)
         
         return torch.mean(samples, dim=0), self.dice_history, self.scanned_slices[:-1]

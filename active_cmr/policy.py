@@ -20,6 +20,32 @@ class ScanPolicy:
         """Update policy state with new scan position"""
         self.scanned_positions.append(z_position)
 
+    def calculate_uncertainty(self, samples):
+        """Calculate uncertainty based on sample variance"""
+        # Convert to probabilities
+        probs = torch.softmax(samples, dim=1)  # [num_samples, 4, D, H, W]
+        
+        # Calculate variance across samples
+        variance = torch.var(probs, dim=0)  # [4, D, H, W]
+        total_variance = torch.sum(variance, dim=0)  # [D, H, W]
+        
+        # Calculate distance penalty
+        distance_penalty = torch.ones_like(total_variance)
+        for z in self.scanned_positions:
+            z_dist = torch.arange(self.volume_size[0], device=total_variance.device)
+            
+            # Hard penalty for immediate neighbors
+            neighbor_mask = torch.abs(z_dist - z) <= self.neighborhood_size
+            distance_penalty[neighbor_mask] *= 0.1
+            
+            # Exponential penalty for other positions
+            z_penalty = torch.exp(((z_dist - z) / (self.volume_size[0]))**2)
+            distance_penalty *= z_penalty.view(-1, 1, 1)
+        
+        # Normalize variance and apply penalty
+        variance_norm = (total_variance - total_variance.min()) / (total_variance.max() - total_variance.min() + 1e-10)
+        return variance_norm * distance_penalty
+
 class RandomPolicy(ScanPolicy):
     def __init__(self, volume_size, scan_budget):
         super().__init__(volume_size, scan_budget)
@@ -38,31 +64,6 @@ class RandomPolicy(ScanPolicy):
             return np.random.randint(0, self.volume_size[0])
             
         return np.random.choice(list(self.available_z))
-    
-class UncertaintyPolicy(ScanPolicy):
-    def __init__(self, volume_size, scan_budget):
-        super().__init__(volume_size, scan_budget)
-
-    def calculate_uncertainty(self, samples):
-        """Calculate uncertainty from samples"""
-        probs = torch.softmax(samples, dim=1)
-        mean_probs = torch.mean(probs, dim=0)
-        entropy = -torch.sum(mean_probs * torch.log(mean_probs + 1e-10), dim=0)
-        
-        # Calculate distance penalty
-        distance_penalty = torch.ones_like(entropy)
-        for z in self.scanned_positions:
-            z_dist = torch.arange(self.volume_size[0], device=entropy.device)
-            z_penalty = torch.exp((2*(z_dist - z) / (self.volume_size[0]))**2)
-            distance_penalty *= z_penalty.view(-1, 1, 1)
-        
-        entropy_norm = (entropy - entropy.min()) / (entropy.max() - entropy.min() + 1e-10)
-        return entropy_norm * distance_penalty
-
-    def get_next_position(self, samples):
-        uncertainty = self.calculate_uncertainty(samples)
-        z_uncertainty = torch.mean(uncertainty, dim=(1,2))
-        return torch.argmax(z_uncertainty).item()
 
 class SequentialPolicy(ScanPolicy):
     """Scan slices sequentially from top to bottom"""

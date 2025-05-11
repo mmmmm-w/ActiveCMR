@@ -294,6 +294,8 @@ def plot_loss_curves(history_file, save_dir=None):
     else:
         plt.show()
 
+    return fig
+
 def show_label_map_slices_XYZ(volume, axis='axial', num_slices=20, cmap='gray'):
     """
     Visualize slices of a 3D volume assumed to be in (X, Y, Z) order.
@@ -329,6 +331,7 @@ def show_label_map_slices_XYZ(volume, axis='axial', num_slices=20, cmap='gray'):
         plt.axis('off')
     plt.tight_layout()
     plt.show()
+    return fig
 
 def visualize_scanned_slices(scanned_slices):
     """
@@ -355,6 +358,7 @@ def visualize_scanned_slices(scanned_slices):
         axes[j].axis('off')
     plt.tight_layout()
     plt.show()
+    return fig
 
 def visualize_scan_and_sample(sample, scanned_slices, threshold=0.5):
     """
@@ -406,6 +410,7 @@ def visualize_scan_and_sample(sample, scanned_slices, threshold=0.5):
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     plt.show()
+    return fig
 
 def visualize_3d_volume_plotly(volume, threshold=0.5):
     # Create coordinates for each point
@@ -435,6 +440,7 @@ def visualize_3d_volume_plotly(volume, threshold=0.5):
     )
     
     fig.show()
+    return fig
 
 # Method 2: Using Matplotlib (Multiple isosurfaces)
 def visualize_3d_volume_matplotlib(volume, threshold=0.5):
@@ -458,6 +464,7 @@ def visualize_3d_volume_matplotlib(volume, threshold=0.5):
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     plt.show()
+    return fig
 
 #UTILS
 def label2onehot(labelmap, classes=(0, 1, 2, 4)):

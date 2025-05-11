@@ -14,7 +14,8 @@ def run_experiments():
         'learning_rate': 0.0001,
         'epochs': 250,
         'validation_interval': 10,
-        'checkpoint_dir': "checkpoints/cvae"
+        'checkpoint_dir': "checkpoints/cvae",
+        'slice_align_weight': 0.0,
     }
     
     # Hyperparameters to test

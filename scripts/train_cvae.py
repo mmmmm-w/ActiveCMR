@@ -241,7 +241,7 @@ def train_with_config(config):
     z_dim = config['z_dim']
     checkpoint_dir = config['checkpoint_dir']
     slice_align_weight = config['slice_align_weight']
-
+    
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on {device} with config: z_dim={z_dim}, beta={beta}")

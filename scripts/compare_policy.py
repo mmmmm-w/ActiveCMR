@@ -283,10 +283,10 @@ def print_summary_chart(results, save_path=None):
 if __name__ == "__main__":
     # Model configuration
     z_dim = 128
-    beta = 0.001
-    scan_budget = 10
+    beta = 0.0001
+    scan_budget = 5
     num_samples = 16
-    temperature = 0.5
+    temperature = 1.0
     num_subjects = 50
 
     # Define policies to test
@@ -300,7 +300,6 @@ if __name__ == "__main__":
 
     # Load model
     checkpoint_path = f"checkpoints/cvae/z{z_dim}_beta{beta}/best_cvae_z{z_dim}_beta{beta}.pth"
-    checkpoint_path = f"checkpoints/cvae/best_cvae_z{z_dim}_beta{beta}.pth"
     model = GenVAE3D_conditional(
         img_size=128,
         depth=64,
