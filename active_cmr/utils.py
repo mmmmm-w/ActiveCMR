@@ -331,7 +331,6 @@ def show_label_map_slices_XYZ(volume, axis='axial', num_slices=20, cmap='gray'):
         plt.axis('off')
     plt.tight_layout()
     plt.show()
-    return fig
 
 def visualize_scanned_slices(scanned_slices):
     """
