@@ -33,3 +33,14 @@ unzip Dataset.zip -d Dataset/
 
 ## Usage
 
+**Demo**
+```
+python demo/demo.py
+```
+
+**Training**
+```
+python scripts/train_cvae.py
+```
+You may adjust configurations in the training script.
+
