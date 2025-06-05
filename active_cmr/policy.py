@@ -7,6 +7,7 @@ class ScanPolicy:
         self.volume_size = volume_size
         self.scanned_positions = []
         self.scan_budget = scan_budget
+        self.neighborhood_size = 3
 
     def get_first_position(self):
         """Get the first scan position"""
