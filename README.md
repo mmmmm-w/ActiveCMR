@@ -3,7 +3,7 @@
 ## Description
 
 
-ActiveCMR is a research project focused on applying Active Learning techniques to Cardiac Magnetic Resonance (CMR) image segmentation. The goal is to improve data efficiency and model performance by selecting the most informative MRI slices for annotation. The project incorporates uncertainty estimation and adaptive data acquisition strategies to guide active sampling during training.
+ActiveCMR is a research project focused on applying Active Learning techniques to Cardiac Magnetic Resonance (CMR) image segmentation. The goal is to improve data efficiency and model performance by selecting the most informative MRI slices for annotation. The project incorporates uncertainty estimation and adaptive data acquisition strategies to guide active sampling during scanning.
 
 
 ## Installation
