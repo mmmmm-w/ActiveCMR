@@ -12,21 +12,20 @@ def run_experiments():
         'root_dir': "Dataset",
         'batch_size': 16,
         'learning_rate': 0.0001,
-        'epochs': 250,
+        'epochs': 400,
         'validation_interval': 10,
-        'checkpoint_dir': "checkpoints/cvae",
-        'slice_align_weight': 0.0,
+        'checkpoint_dir': "checkpoints/cvae_both",
     }
     
     # Hyperparameters to test
-    z_dims = [16, 32, 64, 128]  # Different latent space dimensions
-    betas = [0.0001, 0.001, 0.01]  # Different KL loss weights
+    z_dims = [64, 128, 256]  # Different latent space dimensions
+    betas = [0.0001, 0.0005, 0.001, 0.005]  # Different KL loss weights
     
     # Results storage
     results = []
     
     # Create results directory
-    results_dir = "results/cvae"
+    results_dir = "results/cvae_both"
     os.makedirs(results_dir, exist_ok=True)
     
     # Run experiments

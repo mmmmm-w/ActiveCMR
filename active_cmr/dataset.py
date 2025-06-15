@@ -6,7 +6,7 @@ import nibabel as nib
 import numpy as np
 from torch.utils.data import Dataset
 from pathlib import Path
-from .utils import center_crop, label2onehot, get_label_center, crop_around_center, extract_slice_and_meta
+from .utils import label2onehot, get_mass_center, crop_around_center, extract_slice_and_meta
 
 
 class CardiacSliceDataset(Dataset):
@@ -18,13 +18,13 @@ class CardiacSliceDataset(Dataset):
         state (str): One of ['HR_ED', 'HR_ES', 'LR_ED', 'LR_ES']
         volume_size (tuple): Desired volume size after cropping (x, y, z)
         num_slices (int): Number of 2D slices to extract per volume
-        direction (str): Slice extraction strategy - 'axial' or 'random'
+        direction (str): Slice extraction strategy - 'axial' or 'both' (axial + one long axis)
         slice_size (tuple): Size of extracted 2D slices (default: (128, 128))
     """
     def __init__(self, root_dir, state, volume_size, num_slices, 
                  direction='axial', slice_size=(128, 128)):
         assert state in ['HR_ED', 'HR_ES', 'LR_ED', 'LR_ES'], f"Invalid state: {state}"
-        assert direction in ['axial', 'random'], f"Invalid direction: {direction}"
+        assert direction in ['axial', 'both'], f"Invalid direction: {direction}"
         
         self.root_dir = root_dir
         self.state = state
@@ -50,7 +50,7 @@ class CardiacSliceDataset(Dataset):
         volume = volume.permute(2, 0, 1)  # (X,Y,Z) -> (Z,X,Y)
         
         # Get center of the labeled regions
-        center = get_label_center(volume)
+        center = get_mass_center(volume)
         
         # Crop volume around the center
         volume = crop_around_center(volume, self.volume_size, center)
@@ -88,8 +88,31 @@ class CardiacSliceDataset(Dataset):
             centers[:, 1] = volume_shape[1] // 2
             centers[:, 2] = volume_shape[2] // 2
             
-        else:  # random direction
-            raise NotImplementedError("Random direction not implemented yet")
+        elif self.direction == "both":
+            # Generate axial slices
+            normals = torch.zeros(num_slices + 1, 3, dtype=torch.float32)  # +1 for long axis
+            normals[:num_slices, 0] = 1.0  # Axial slices
+            
+            # Generate random z-coordinates for axial slices
+            if z_bounds is not None:
+                z_min, z_max = z_bounds
+                z_coords = torch.randint(int(z_min), int(z_max) + 1, (num_slices,), dtype=torch.float32)
+            else:
+                z_coords = torch.randint(0, volume_shape[0], (num_slices,), dtype=torch.float32)
+            
+            centers = torch.zeros(num_slices + 1, 3, dtype=torch.float32)
+            centers[:num_slices, 0] = z_coords
+            centers[:num_slices, 1] = volume_shape[1] // 2
+            centers[:num_slices, 2] = volume_shape[2] // 2
+            
+            # Add one long axis slice (2-chamber view)
+            normals[num_slices, 1] = -1.0  # Long axis normal vector
+            centers[num_slices, 0] = volume_shape[0] // 2  # Center in z
+            centers[num_slices, 1] = volume_shape[1] // 2  # Center in y
+            centers[num_slices, 2] = volume_shape[2] // 2  # Center in x
+        
+        else:
+            raise ValueError(f"Invalid direction: {self.direction}")
         
         return centers, normals
 

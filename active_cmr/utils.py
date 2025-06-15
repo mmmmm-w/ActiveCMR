@@ -12,40 +12,6 @@ from plotly.subplots import make_subplots
 from scipy.ndimage import map_coordinates
 
 
-#METRICS
-def calculate_dice(ground_truth, generated):
-    """
-    Calculate Dice coefficient for each anatomical structure (LV, MYO, RV)
-    
-    Args:
-        ground_truth: [4, D, H, W] tensor/array (background, LV, MYO, RV)
-        generated: [4, D, H, W] tensor/array (background, LV, MYO, RV)
-    Returns:
-        dict: Dice scores for each structure and average
-    """
-    # Convert to numpy if tensors
-    if torch.is_tensor(ground_truth):
-        ground_truth = ground_truth.cpu().numpy()
-    if torch.is_tensor(generated):
-        generated = generated.cpu().numpy()
-    
-    dice_scores = {}
-    # Calculate Dice for each structure (excluding background)
-    for i, label in enumerate(['LV', 'MYO', 'RV']):
-        # Convert to binary masks using 0.5 threshold
-        gt_mask = (ground_truth[i+1] > 0.5).astype(float)
-        gen_mask = (generated[i+1] > 0.5).astype(float)
-        
-        # Calculate Dice coefficient: 2|X∩Y|/(|X|+|Y|)
-        intersection = np.sum(gt_mask * gen_mask)
-        dice = (2.0 * intersection) / (np.sum(gt_mask) + np.sum(gen_mask) + 1e-6)
-        dice_scores[label] = dice
-    
-    # Calculate average Dice
-    dice_scores['average'] = np.mean(list(dice_scores.values()))
-    
-    return dice_scores
-
 #VISUALIZATION
 def extract_slice_and_meta(volume, center, normal, slice_shape=(128, 128), pixel_spacing=1.0, to_degrees=True):
     """
@@ -121,107 +87,6 @@ def extract_slice_and_meta(volume, center, normal, slice_shape=(128, 128), pixel
     
     return slice_2d, meta
 
-def extract_slice_and_meta_torch(volume: torch.Tensor, 
-                                 center: torch.Tensor, 
-                                 normal: torch.Tensor, 
-                                 slice_shape=(128, 128), 
-                                 pixel_spacing=1.0, 
-                                 to_degrees=True,
-                                 device='cpu'):
-    """
-    Extracts a 2D slice from a 3D volume using PyTorch along a plane defined by
-    a center (z, x, y) and a normal vector.
-
-    Parameters:
-      volume (torch.Tensor): 3D volume with shape (D, H, W) on the specified device.
-      center (torch.Tensor): Center of the slicing plane in (z, x, y) coordinates (1D tensor of size 3).
-      normal (torch.Tensor): Normal vector of the slicing plane (1D tensor of size 3).
-      slice_shape (tuple): Desired shape (height, width) of the 2D slice.
-      pixel_spacing (float): Spacing between pixels in the extracted slice.
-      to_degrees (bool): If True, returns theta and phi in degrees.
-      device (str or torch.device): Device to perform computations on ('cpu' or 'cuda').
-
-    Returns:
-      slice_2d (torch.Tensor): The 2D segmentation slice on the specified device.
-      meta (dict): Metadata containing:
-                    - 'center': The center coordinate as a list [z, x, y].
-                    - 'theta': Azimuth angle of the normal (from x-axis in the x-y plane).
-                    - 'phi': Angle from the z-axis.
-    """
-    volume = volume.to(device).float()
-    center = torch.as_tensor(center, dtype=torch.float32, device=device)
-    normal = torch.as_tensor(normal, dtype=torch.float32, device=device)
-    normal = normal / torch.linalg.norm(normal)
-
-    # Compute orientation angles
-    theta = torch.arctan2(normal[1], normal[0])
-    phi = torch.arccos(normal[2])
-    if to_degrees:
-        theta = torch.rad2deg(theta)
-        phi = torch.rad2deg(phi)
-
-    # Compute orthonormal vectors spanning the plane
-    if abs(normal[0]) > abs(normal[1]):
-        v1 = torch.tensor([-normal[2], 0, normal[0]], dtype=torch.float32, device=device)
-    else:
-        v1 = torch.tensor([0, normal[2], -normal[1]], dtype=torch.float32, device=device)
-    v1 = v1 / torch.linalg.norm(v1)
-    v2 = torch.linalg.cross(normal, v1)
-
-    # Create grid coordinates in the plane
-    h, w = slice_shape
-    grid_y_coords = (torch.arange(h, device=device) - h / 2) * pixel_spacing
-    grid_x_coords = (torch.arange(w, device=device) - w / 2) * pixel_spacing
-    grid_x, grid_y = torch.meshgrid(grid_x_coords, grid_y_coords, indexing='xy') # HxW grids
-
-    # Compute 3D coordinates for each grid point
-    # grid_points shape: (H, W, 3) in (z, x, y) order
-    grid_points = center.view(1, 1, 3) + \
-                  grid_x.unsqueeze(-1) * v1.view(1, 1, 3) + \
-                  grid_y.unsqueeze(-1) * v2.view(1, 1, 3)
-
-    # --- Prepare for grid_sample ---
-    # grid_sample expects input shape (N, C, D_in, H_in, W_in)
-    # and grid shape (N, D_out, H_out, W_out, 3) with coordinates in (x, y, z) order [-1, 1]
-    
-    # Reshape volume: (D, H, W) -> (1, 1, D, H, W)
-    volume_unsqueezed = volume.unsqueeze(0).unsqueeze(0)
-    D, H_vol, W_vol = volume.shape
-
-    # Normalize grid_points to [-1, 1] based on volume dimensions
-    # Original grid_points are (z, x, y), need to map to grid_sample's (x_norm, y_norm, z_norm)
-    normalized_grid = torch.zeros_like(grid_points)
-    normalized_grid[..., 0] = (grid_points[..., 1] / (W_vol - 1)) * 2 - 1  # Normalize x -> W
-    normalized_grid[..., 1] = (grid_points[..., 2] / (H_vol - 1)) * 2 - 1  # Normalize y -> H
-    normalized_grid[..., 2] = (grid_points[..., 0] / (D - 1)) * 2 - 1      # Normalize z -> D
-
-    # Reshape grid for grid_sample: (H_slice, W_slice, 3) -> (1, H_slice, W_slice, 1, 3)
-    # We want a 2D slice, so D_out=1. grid_sample needs 5D grid for 3D input.
-    sampling_grid = normalized_grid.unsqueeze(0).unsqueeze(-2) # Shape: (1, H, W, 1, 3)
-
-    # Perform sampling
-    # mode='nearest' corresponds to order=0 interpolation
-    # padding_mode='border' clamps coordinates to the edge, similar to mode='nearest' in map_coordinates
-    slice_sampled = F.grid_sample(
-        volume_unsqueezed, 
-        sampling_grid, 
-        mode='nearest', 
-        padding_mode='border', 
-        align_corners=True # Important for consistency with how coordinates were calculated
-    )
-
-    # Reshape output: (1, 1, 1, H, W) -> (H, W)
-    slice_2d = slice_sampled.squeeze()
-
-    # Package metadata
-    meta = {
-        'center': center.cpu().tolist(),
-        'theta': theta.item() if torch.is_tensor(theta) else theta,
-        'phi': phi.item() if torch.is_tensor(phi) else phi,
-    }
-
-    return slice_2d, meta
-
 def plot_loss_curves(history_file, save_dir=None):
     """
     Plot training and validation loss curves from the history file with log scale.
@@ -295,42 +160,6 @@ def plot_loss_curves(history_file, save_dir=None):
         plt.show()
 
     return fig
-
-def show_label_map_slices_XYZ(volume, axis='axial', num_slices=20, cmap='gray'):
-    """
-    Visualize slices of a 3D volume assumed to be in (X, Y, Z) order.
-    
-    Args:
-        volume (np.ndarray or torch.Tensor): shape [X, Y, Z]
-        axis (str): 'axial' (Z), 'coronal' (Y), or 'sagittal' (X)
-        num_slices (int): number of slices to display
-    """
-    volume = volume.numpy() if isinstance(volume, torch.Tensor) else volume
-    X, Y, Z = volume.shape
-
-    if axis == 'axial':
-        indices = np.linspace(0, Z-1, num_slices).astype(int)
-        slices = [volume[:, :, z] for z in indices]
-        title = "Axial (Z)"
-    elif axis == 'coronal':
-        indices = np.linspace(0, Y-1, num_slices).astype(int)
-        slices = [volume[:, y, :] for y in indices]
-        title = "Coronal (Y)"
-    elif axis == 'sagittal':
-        indices = np.linspace(0, X-1, num_slices).astype(int)
-        slices = [volume[x, :, :] for x in indices]
-        title = "Sagittal (X)"
-    else:
-        raise ValueError("Axis must be 'axial', 'coronal', or 'sagittal'")
-
-    plt.figure(figsize=(15, 3))
-    for i, s in enumerate(slices):
-        plt.subplot(2, int(num_slices/2), i + 1)
-        plt.imshow(s.T, cmap=cmap, origin='lower')  # transpose for correct orientation
-        plt.title(f"{title} {indices[i]}")
-        plt.axis('off')
-    plt.tight_layout()
-    plt.show()
 
 def visualize_scanned_slices(scanned_slices):
     """
@@ -411,36 +240,6 @@ def visualize_scan_and_sample(sample, scanned_slices, threshold=0.5):
     plt.show()
     return fig
 
-def visualize_3d_volume_plotly(volume, threshold=0.5):
-    # Create coordinates for each point
-    x, y, z = np.where(volume > threshold)
-    
-    # Create 3D scatter plot
-    fig = go.Figure(data=[go.Scatter3d(
-        x=x, y=y, z=z,
-        mode='markers',
-        marker=dict(
-            size=2,
-            color=volume[x, y, z],  # color by intensity
-            colorscale='Viridis',
-            opacity=0.8
-        )
-    )])
-    
-    fig.update_layout(
-        scene=dict(
-            xaxis_title='X',
-            yaxis_title='Y',
-            zaxis_title='Z'
-        ),
-        width=800,
-        height=800,
-        title='3D Volume Visualization'
-    )
-    
-    fig.show()
-    return fig
-
 # Method 2: Using Matplotlib (Multiple isosurfaces)
 def visualize_3d_volume_matplotlib(volume, threshold=0.5):
     fig = plt.figure(figsize=(10, 10))
@@ -502,7 +301,7 @@ def onehot2label(seg_onehot):
         labelmap[labelmap == 3] = 4
         return labelmap
 
-def get_label_center(volume):
+def get_mass_center(volume):
     """
     Calculate the center of mass of the labeled regions in a 3D volume,
     excluding the background (label 0).
@@ -553,7 +352,7 @@ def crop_around_center(volume, crop_size=(128, 128, 64), center=None, pad_value=
     
     # Get center if not provided
     if center is None:
-        center = get_label_center(volume)
+        center = get_mass_center(volume)
     center = np.array(center, dtype=np.int32)
     
     # Calculate crop boundaries
@@ -601,36 +400,6 @@ def crop_around_center(volume, crop_size=(128, 128, 64), center=None, pad_value=
         cropped = torch.from_numpy(cropped)
     
     return cropped
-
-def center_crop(volume, crop_size=(128, 128, 64)):
-    """
-    Center crop a 3D volume (shape: [X, Y, Z]) to the given size.
-    
-    Args:
-        volume (np.ndarray or torch.Tensor): shape [X, Y, Z]
-        crop_size (tuple): (crop_X, crop_Y, crop_Z)
-    
-    Returns:
-        Cropped volume of shape [crop_X, crop_Y, crop_Z]
-    """
-    if isinstance(volume, torch.Tensor):
-        shape = volume.shape
-    else:
-        shape = np.array(volume.shape)
-
-    crop_x, crop_y, crop_z = crop_size
-    start_x = (shape[0] - crop_x) // 2
-    start_y = (shape[1] - crop_y) // 2
-    start_z = (shape[2] - crop_z) // 2
-
-    if isinstance(volume, torch.Tensor):
-        return volume[start_x:start_x+crop_x,
-                      start_y:start_y+crop_y,
-                      start_z:start_z+crop_z]
-    else:
-        return volume[start_x:start_x+crop_x,
-                      start_y:start_y+crop_y,
-                      start_z:start_z+crop_z]
     
 # Test the functions
 def create_fake_labelmap(shape=(128, 128, 64), seed=42):
@@ -651,18 +420,6 @@ def test_onehot_roundtrip():
     print(f"Mismatch ratio: {mismatch_ratio:.6f}")
     assert mismatch_ratio < 1e-6, "One-hot roundtrip failed!"
     print("✅ onehot2label(label2onehot(labelmap)) passed.")
-
-def test_center_crop():
-    labelmap = create_fake_labelmap((150, 150, 80))
-    cropped = center_crop(labelmap, (128, 128, 64))
-    print(f"Original shape: {labelmap.shape}, Cropped shape: {cropped.shape}")
-    assert cropped.shape == (128, 128, 64), "Crop size mismatch"
-    print("✅ center_crop passed.")
-
-def test_visualization():
-    labelmap = create_fake_labelmap()
-    show_label_map_slices_XYZ(labelmap, axis='axial', num_slices=8)
-    print("✅ Visualization shown.")
 
 def create_interactive_comparison(checkpoint_dir):
     """Creates an interactive comparison plot of different model configurations."""
@@ -849,12 +606,6 @@ def test_extract_slice():
 if __name__ == "__main__":
     print("=== Testing label2onehot / onehot2label ===")
     test_onehot_roundtrip()
-
-    print("\n=== Testing center_crop ===")
-    test_center_crop()
-
-    print("\n=== Testing slice visualization ===")
-    test_visualization()
 
     print("\n=== Testing slice extraction ===")
     test_extract_slice()
