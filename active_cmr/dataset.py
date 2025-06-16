@@ -20,11 +20,13 @@ class CardiacSliceDataset(Dataset):
         num_slices (int): Number of 2D slices to extract per volume
         direction (str): Slice extraction strategy - 'axial' or 'both' (axial + one long axis)
         slice_size (tuple): Size of extracted 2D slices (default: (128, 128))
+        long_axis_prob (float): Probability of including long axis view when direction='both' (default: 0.5)
     """
     def __init__(self, root_dir, state, volume_size, num_slices, 
-                 direction='axial', slice_size=(128, 128)):
+                 direction='axial', slice_size=(128, 128), long_axis_prob=0.5):
         assert state in ['HR_ED', 'HR_ES', 'LR_ED', 'LR_ES'], f"Invalid state: {state}"
         assert direction in ['axial', 'both'], f"Invalid direction: {direction}"
+        assert 0.0 <= long_axis_prob <= 1.0, f"long_axis_prob must be between 0 and 1, got {long_axis_prob}"
         
         self.root_dir = root_dir
         self.state = state
@@ -32,6 +34,7 @@ class CardiacSliceDataset(Dataset):
         self.num_slices = num_slices
         self.direction = direction
         self.slice_size = slice_size
+        self.long_axis_prob = long_axis_prob
         
         # Get list of all subject directories
         self.subject_dirs = sorted([
@@ -106,10 +109,16 @@ class CardiacSliceDataset(Dataset):
             centers[:num_slices, 2] = volume_shape[2] // 2
             
             # Add one long axis slice (2-chamber view)
-            normals[num_slices, 1] = -1.0  # Long axis normal vector
-            centers[num_slices, 0] = volume_shape[0] // 2  # Center in z
-            centers[num_slices, 1] = volume_shape[1] // 2  # Center in y
-            centers[num_slices, 2] = volume_shape[2] // 2  # Center in x
+            include_long_axis = torch.rand(1).item() < self.long_axis_prob
+            if include_long_axis:
+                normals[num_slices, 1] = -1.0  # Long axis normal vector
+                centers[num_slices, 0] = volume_shape[0] // 2  # Center in z
+                centers[num_slices, 1] = volume_shape[1] // 2  # Center in y
+                centers[num_slices, 2] = volume_shape[2] // 2  # Center in x
+            else:
+                #remove +1
+                normals = normals[:-1]
+                centers = centers[:-1]
         
         else:
             raise ValueError(f"Invalid direction: {self.direction}")

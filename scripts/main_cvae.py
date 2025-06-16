@@ -14,12 +14,14 @@ def run_experiments():
         'learning_rate': 0.0001,
         'epochs': 400,
         'validation_interval': 10,
+        'slice_type': "both",
+        'long_axis_prob': 0.5,
         'checkpoint_dir': "checkpoints/cvae_both",
     }
     
     # Hyperparameters to test
     z_dims = [64, 128, 256]  # Different latent space dimensions
-    betas = [0.0001, 0.0005, 0.001, 0.005]  # Different KL loss weights
+    betas = [0.0005, 0.001, 0.005]  # Different KL loss weights
     
     # Results storage
     results = []

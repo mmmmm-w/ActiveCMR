@@ -66,6 +66,43 @@ class InferencePipeline:
         
         return slice_tensor, meta_tensor
     
+    def scan_long_axis(self, volume):
+        """
+        Take a long axis scan (2-chamber view)
+        
+        Args:
+            volume: [D, H, W] ground truth volume
+        Returns:
+            tuple: (slice_tensor, meta_tensor)
+        """
+        # Calculate center point (x,y,z)
+        center = np.array([
+            self.volume_size[0]//2,  # z (center of volume)
+            self.volume_size[1]//2,  # x (H/2)
+            self.volume_size[2]//2   # y (W/2)
+        ])
+        
+        # Normal vector for long axis view [0, 1, 0] (2-chamber view)
+        normal = np.array([0, -1, 0])
+        
+        # Extract slice
+        slice_2d, meta = extract_slice_and_meta(
+            volume.cpu().numpy(),
+            center=center,
+            normal=normal,
+            slice_shape=self.slice_size
+        )
+        slice_tensor = label2onehot(torch.from_numpy(slice_2d))
+        
+        # Convert to tensors
+        meta_tensor = torch.tensor([
+                *meta['center'],  # x, y, z
+                meta['theta'],    # azimuth angle
+                meta['phi']       # elevation angle
+            ])
+        
+        return slice_tensor, meta_tensor
+    
     def calculate_dice(self, samples, ground_truth):
         """Calculate Dice score for each class (1–3) across samples using MONAI"""
         pred_onehots = []
@@ -142,16 +179,34 @@ class InferencePipeline:
         
         return samples, mean_dice_scores, next_z, uncertainty_map
 
-    def run_inference(self, volume, policy_class: ScanPolicy, scan_budget: int, log=False):
-        """Run inference pipeline"""
+    def run_inference(self, volume, policy_class: ScanPolicy, scan_budget: int, long_axis=False, log=False):
+        """
+        Run inference pipeline
+        
+        Args:
+            volume: ground truth volume
+            policy_class: scan policy class
+            scan_budget: number of scans to take
+            long_axis: whether to take a long axis scan before other scans
+            log: whether to print progress
+        """
         self.clear_history()
         policy = policy_class(self.volume_size, scan_budget)
         
-        # First scan
+        # Take long axis scan if requested
+        if long_axis:
+            if log:
+                print("Scan 1 long axis")
+            slice_data, meta = self.scan_long_axis(volume)
+            self.scanned_slices.append((slice_data, meta))
+        
+        # First short axis scan
         z = policy.get_first_position()
         samples, _, z, _ = self.process_single_scan(volume, policy, z, log)
 
-        while len(self.scanned_slices) <= scan_budget:
+        # Continue with remaining scans
+        while len(self.scanned_slices) < scan_budget:
+            print(len(self.scanned_slices))
             samples, _, z, _ = self.process_single_scan(volume, policy, z, log)
         
         return torch.mean(samples, dim=0), self.dice_history, self.scanned_slices[:-1]

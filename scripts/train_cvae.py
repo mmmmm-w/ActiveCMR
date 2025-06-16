@@ -197,7 +197,8 @@ def train_with_config(config):
     validation_interval = config['validation_interval']
     z_dim = config['z_dim']
     checkpoint_dir = config['checkpoint_dir']
-    
+    slice_type = config['slice_type']
+    long_axis_prob = config['long_axis_prob']
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on {device} with config: z_dim={z_dim}, beta={beta}")
@@ -212,7 +213,8 @@ def train_with_config(config):
         state="HR_ED",
         volume_size=(64, 128, 128),
         num_slices=8,
-        direction="both"  # axial or both
+        direction=slice_type,  # axial or both
+        long_axis_prob=long_axis_prob  # 50% chance of including long axis view
     )
     
     val_dataset = CardiacSliceDataset(
@@ -220,7 +222,8 @@ def train_with_config(config):
         state="HR_ED",
         volume_size=(64, 128, 128),
         num_slices=8,
-        direction="both"
+        direction=slice_type,
+        long_axis_prob=long_axis_prob  # 50% chance of including long axis view
     )
     
     test_dataset = CardiacSliceDataset(
@@ -228,7 +231,8 @@ def train_with_config(config):
         state="HR_ED",
         volume_size=(64, 128, 128),
         num_slices=8,
-        direction="both"
+        direction=slice_type,
+        long_axis_prob=long_axis_prob  # 50% chance of including long axis view
     )
 
     train_loader = DataLoader(
@@ -300,6 +304,8 @@ if __name__ == "__main__":
         'epochs': 400,
         'validation_interval': 10,
         'z_dim': 128,
+        "slice_type": "both",
+        "long_axis_prob": 0.5,
         'checkpoint_dir': "checkpoints/cvae_both"
     }
     
