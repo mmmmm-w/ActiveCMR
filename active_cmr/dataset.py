@@ -93,7 +93,7 @@ class CardiacSliceDataset(Dataset):
             
         elif self.direction == "both":
             # Generate axial slices
-            normals = torch.zeros(num_slices + 1, 3, dtype=torch.float32)  # +1 for long axis
+            normals = torch.zeros(num_slices, 3, dtype=torch.float32)
             normals[:num_slices, 0] = 1.0  # Axial slices
             
             # Generate random z-coordinates for axial slices
@@ -110,15 +110,11 @@ class CardiacSliceDataset(Dataset):
             
             # Add one long axis slice (2-chamber view)
             include_long_axis = torch.rand(1).item() < self.long_axis_prob
-            if include_long_axis:
-                normals[num_slices, 1] = -1.0  # Long axis normal vector
-                centers[num_slices, 0] = volume_shape[0] // 2  # Center in z
-                centers[num_slices, 1] = volume_shape[1] // 2  # Center in y
-                centers[num_slices, 2] = volume_shape[2] // 2  # Center in x
-            else:
-                #remove +1
-                normals = normals[:-1]
-                centers = centers[:-1]
+            if include_long_axis: # replace the last slice with long axis view
+                normals[-1, 1] = -1.0  # Long axis normal vector
+                centers[-1, 0] = volume_shape[0] // 2  # Center in z
+                centers[-1, 1] = volume_shape[1] // 2  # Center in y
+                centers[-1, 2] = volume_shape[2] // 2  # Center in x
         
         else:
             raise ValueError(f"Invalid direction: {self.direction}")

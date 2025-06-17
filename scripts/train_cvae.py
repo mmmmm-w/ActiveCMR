@@ -299,11 +299,11 @@ if __name__ == "__main__":
     config = {
         'root_dir': "Dataset",
         'batch_size': 16,
-        'beta': 0.001,
+        'beta': 0.005,
         'learning_rate': 0.0001,
         'epochs': 400,
         'validation_interval': 10,
-        'z_dim': 128,
+        'z_dim': 64,
         "slice_type": "both",
         "long_axis_prob": 0.5,
         'checkpoint_dir': "checkpoints/cvae_both"

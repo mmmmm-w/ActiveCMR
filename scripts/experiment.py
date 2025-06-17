@@ -15,11 +15,13 @@ from active_cmr.utils import onehot2label
 if __name__ == "__main__":
     # Load model
     z_dim = 64
-    beta = 0.001
-    scan_budget = 10
+    beta = 0.005
+    scan_budget = 5
     num_samples = 16
     temperature = 0.5
-    checkpoint_path = f"checkpoints/cvae_both/z{z_dim}_beta{beta}/best_cvae_z{z_dim}_beta{beta}.pth"
+    # checkpoint_path = f"checkpoints/cvae_both/z{z_dim}_beta{beta}/best_cvae_z{z_dim}_beta{beta}.pth"
+    checkpoint_path = f"checkpoints/cvae_both/best_cvae_z{z_dim}_beta{beta}.pth"
+    long_axis = False
 
     model = GenVAE3D_conditional(
         img_size=128,
@@ -50,13 +52,13 @@ if __name__ == "__main__":
     pipeline = InferencePipeline(model=model, volume_size=(64,128,128), num_samples=num_samples, temperature=temperature)
 
     print("Running Sample Variance pipeline")
-    pipeline.run_inference(ground_truth_volume, policy_class=SampleVariancePolicy, scan_budget=scan_budget, long_axis=True, log=True)
+    pipeline.run_inference(ground_truth_volume, policy_class=SampleVariancePolicy, scan_budget=scan_budget, long_axis=long_axis, log=True)
     print("#"*70)
 
     print("Running sequential sampling pipeline")
-    pipeline.run_inference(ground_truth_volume, policy_class=SequentialPolicy, scan_budget=scan_budget, long_axis=True, log=True)
+    pipeline.run_inference(ground_truth_volume, policy_class=SequentialPolicy, scan_budget=scan_budget, long_axis=long_axis, log=True)
     print("#"*70)
 
     print("Running hybrid sampling pipeline")
-    pipeline.run_inference(ground_truth_volume, policy_class=HybridPolicy, scan_budget=scan_budget, long_axis=True, log=True)
+    pipeline.run_inference(ground_truth_volume, policy_class=HybridPolicy, scan_budget=scan_budget, long_axis=long_axis, log=True)
     print("#"*70)
